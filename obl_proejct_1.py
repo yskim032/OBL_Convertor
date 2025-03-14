@@ -6,6 +6,8 @@ import json
 from typing import List, Dict
 from tkinterdnd2 import DND_FILES, TkinterDnD
 from datetime import datetime
+from openpyxl import load_workbook
+import xlrd  # .xls 파일 처리를 위한 라이브러리
 
 # pyinstaller -w -F --add-binary="C:/Users/kod03/AppData/Local/Programs/Python/Python311/tcl/tkdnd2.8;tkdnd2.8" obl_project1.py
 
@@ -488,27 +490,55 @@ class ContainerConverter:
 
     def drop_cll_file(self, event):
         """단일 CLL 파일 드롭 처리"""
-        if not self.selected_pol.get() or not self.selected_tol.get():
-            messagebox.showwarning("경고", "POL과 TOL을 먼저 선택해주세요!")
-            return
-
         file_path = event.data.strip('{}').strip('"')
         if not os.path.exists(file_path):
             messagebox.showerror("오류", "파일이 존재하지 않습니다.")
             return
 
         try:
-            # CLL 파일 읽기
-            df = pd.read_excel(file_path, header=4)
+            # 엑셀 파일 읽기
+            df_check = pd.read_excel(file_path, header=None)
+            # 4행 12열의 값 가져오기 (0-based index이므로 3, 11)
+            terminal_code = str(df_check.iloc[3, 11]).strip()
+
+            if not terminal_code:
+                messagebox.showerror("오류", "(4,12) 위치에서 터미널 코드를 찾을 수 없습니다.")
+                return
+
+            # 터미널 코드를 기반으로 POL, TOL 값 자동 설정
+            port_info = self.terminal_to_port_mapping(terminal_code)
             
-            # 데이터 변환 및 저장
+            if not port_info['pol'] or not port_info['tol']:
+                messagebox.showerror("오류", f"터미널 코드 '{terminal_code}'에 대한 매핑을 찾을 수 없습니다.")
+                return
+
+            # POL, TOL 설정
+            self.selected_pol.set(port_info['pol'])
+            self.selected_tol.set(port_info['tol'])
+
+            # POL 버튼 색상 업데이트
+            for port, btn in self.pol_buttons.items():
+                if port == port_info['pol']:
+                    btn.configure(bg='yellow')
+                else:
+                    btn.configure(bg='SystemButtonFace')
+
+            # TOL 버튼 색상 업데이트
+            for terminal, btn in self.tol_buttons.items():
+                if terminal == port_info['tol']:
+                    btn.configure(bg='yellow')
+                else:
+                    btn.configure(bg='SystemButtonFace')
+
+            # 실제 데이터 처리를 위한 엑셀 파일 읽기
+            df = pd.read_excel(file_path, header=4)
             self.current_file = file_path
             self.input_label.config(text=f"입력 파일: {os.path.basename(file_path)}")
             
-            # 단일 탭의 Summary만 업데이트
+            # 단일 탭의 Summary 업데이트
             self.update_single_summary(df)
             
-            # 멀티 탭의 Summary는 초기화
+            # 멀티 탭의 Summary 초기화
             if hasattr(self, 'multi_summary_text'):
                 self.multi_summary_text.delete(1.0, tk.END)
                 self.multi_summary_text.insert(tk.END, "Multi CLL 탭에서 파일 병합 시 Summary가 표시됩니다.")
@@ -516,8 +546,8 @@ class ContainerConverter:
             self.convert_file()
             
         except Exception as e:
-            print(f"Error in drop_cll_file: {str(e)}")  # 디버깅용
-            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}")
+            error_msg = str(e)
+            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다:\n{error_msg}")
 
     def drop_obl_file(self, event):
         """OBL 파일 드롭 처리"""
@@ -1719,6 +1749,32 @@ class ContainerConverter:
         
         # 현재 매핑 표시
         self.update_tpsz_preview()
+
+    def terminal_to_port_mapping(self, terminal_code):
+        # 터미널 코드에 따른 POL, TOL 매핑 딕셔너리
+        terminal_mapping = {
+            'PNITC': {'pol': 'KRPUS', 'tol': 'KRPUSAB'},
+            'PNCOC': {'pol': 'KRPUS', 'tol': 'KRPUSPN'},
+            'BCTHD': {'pol': 'KRPUS', 'tol': 'KRPUSBC'},
+            'HJNPC': {'pol': 'KRPUS', 'tol': 'KRPUSAP'},
+            'ICTPC': {'pol': 'KRINC', 'tol': 'KRINCAH'},
+            'KEGWC': {'pol': 'KRKAN', 'tol': 'KRKANKT'}
+        }
+        
+        return terminal_mapping.get(terminal_code, {'pol': '', 'tol': ''})
+
+    def process_cll_file(self):
+        # ... existing code ...
+        
+        # 엑셀 파일에서 (12,4) 위치의 터미널 코드 읽기
+        terminal_code = worksheet.cell(12, 4).value
+        
+        # 터미널 코드를 기반으로 POL, TOL 값 설정
+        port_info = self.terminal_to_port_mapping(terminal_code)
+        self.pol_value = port_info['pol']
+        self.tol_value = port_info['tol']
+        
+        # ... existing code ...
 
     def run(self):
         self.root.mainloop()
