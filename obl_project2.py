@@ -129,21 +129,6 @@ class ContainerConverter:
         self.tpsz_tab = ttk.Frame(self.tab_control)
         self.tab_control.add(self.tpsz_tab, text='TpSZ 관리')
 
-        # OBL Stow Code 적용 탭 추가
-        self.obl_tab = ttk.Frame(self.tab_control)
-        self.tab_control.add(self.obl_tab, text='OBL Stow Code 적용')
-        
-        # 드래그 & 드롭 영역
-        drop_frame = ttk.LabelFrame(self.obl_tab, text="OBL 파일")
-        drop_frame.pack(pady=10, padx=10, fill="x")
-        
-        self.obl_drop_label = ttk.Label(drop_frame, text="OBL 파일을 여기에 드롭하세요")
-        self.obl_drop_label.pack(pady=20)
-        
-        # 드래그 앤 드롭 바인딩
-        self.obl_drop_label.drop_target_register(DND_FILES)
-        self.obl_drop_label.dnd_bind('<<Drop>>', self.drop_obl_for_stow)
-
         # 각 탭 설정
         self.setup_single_tab()  # 단일 CLL 탭 설정
         self.setup_multi_cll_tab()  # Multi CLL 탭 설정
@@ -503,6 +488,66 @@ class ContainerConverter:
         next_widget.focus()
         return "break"  # 기본 탭 동작 방지
 
+    def find_matching_services(self, pod_list):
+        """POD 리스트와 매칭되는 서비스 찾기"""
+        matching_services = {}
+        for service_name, mappings in self.stow_mapping.items():
+            for pod in pod_list:
+                for mapping in mappings:
+                    if pod.upper() == mapping['port'].upper() or pod.upper() == mapping['stow_code'].upper():
+                        if service_name not in matching_services:
+                            matching_services[service_name] = set()
+                        matching_services[service_name].add(pod)
+        return matching_services
+
+    def show_service_selection_dialog(self, matching_services):
+        """서비스 선택 다이얼로그 표시"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("서비스 선택")
+        dialog.geometry("400x300")
+        
+        # 설명 레이블
+        ttk.Label(dialog, text="발견된 POD와 일치하는 서비스입니다.\n사용할 서비스를 선택해주세요:", 
+                  justify=tk.CENTER).pack(pady=10)
+        
+        # 서비스 목록 프레임
+        frame = ttk.Frame(dialog)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # 스크롤바 추가
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 서비스 목록 표시
+        listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+        
+        # 서비스와 매칭된 POD 정보 추가
+        for service, pods in matching_services.items():
+            listbox.insert(tk.END, f"{service} (매칭 POD: {', '.join(pods)})")
+        
+        # 선택 결과를 저장할 변수
+        self.selected_service = tk.StringVar()
+        
+        def on_select():
+            selection = listbox.curselection()
+            if selection:
+                # 선택된 서비스 이름만 추출 (POD 정보 제외)
+                service_name = listbox.get(selection[0]).split(" (")[0]
+                self.selected_service.set(service_name)
+                dialog.destroy()
+        
+        # 선택 버튼
+        ttk.Button(dialog, text="선택", command=on_select).pack(pady=10)
+        
+        # 다이얼로그가 닫힐 때까지 대기
+        dialog.transient(self.root)
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+        
+        return self.selected_service.get()
+
     def drop_cll_file(self, event):
         """단일 CLL 파일 드롭 처리"""
         file_path = event.data.strip('{}').strip('"')
@@ -512,8 +557,26 @@ class ContainerConverter:
 
         try:
             # 엑셀 파일 읽기
+            df = pd.read_excel(file_path, header=4)
+            
+            # POD 목록 추출
+            pod_list = df['POD'].unique().tolist()
+            
+            # 매칭되는 서비스 찾기
+            matching_services = self.find_matching_services(pod_list)
+            
+            if not matching_services:
+                messagebox.showwarning("경고", "POD와 일치하는 서비스를 찾을 수 없습니다.")
+                return
+                
+            # 서비스 선택 다이얼로그 표시
+            selected_service = self.show_service_selection_dialog(matching_services)
+            
+            if not selected_service:
+                return
+                
+            # 터미널 코드 읽기
             df_check = pd.read_excel(file_path, header=None)
-            # 4행 12열의 값 가져오기 (0-based index이므로 3, 11)
             terminal_code = str(df_check.iloc[3, 11]).strip()
 
             if not terminal_code:
@@ -545,30 +608,11 @@ class ContainerConverter:
                 else:
                     btn.configure(bg='SystemButtonFace')
 
-            # CLL 데이터 읽기
-            df = pd.read_excel(file_path, header=4)
-            
-            # POD 목록 추출 및 매칭되는 서비스 찾기
-            pod_list = df['POD'].unique().tolist()
-            matching_services = self.find_matching_services(pod_list)
-            
-            if not matching_services:
-                messagebox.showwarning("경고", "일치하는 서비스를 찾을 수 없습니다.")
-                return
-            
-            # 서비스 선택 다이얼로그 표시
-            selected_service = self.show_service_selection_dialog(matching_services)
-            
-            if not selected_service:
-                return
-                
-            # 선택된 서비스 저장
-            self.selected_service.set(selected_service)
-
+            # 파일 정보 업데이트
             self.current_file = file_path
             self.input_label.config(text=f"입력 파일: {os.path.basename(file_path)}")
             
-            # 단일 탭의 Summary 업데이트
+            # Summary 업데이트
             self.update_single_summary(df)
             
             # 멀티 탭의 Summary 초기화
@@ -576,17 +620,90 @@ class ContainerConverter:
                 self.multi_summary_text.delete(1.0, tk.END)
                 self.multi_summary_text.insert(tk.END, "Multi CLL 탭에서 파일 병합 시 Summary가 표시됩니다.")
             
-            # 파일 변환 실행
-            self.convert_file()
+            # 선택된 서비스로 파일 변환
+            self.convert_file(selected_service)
             
         except Exception as e:
-            error_msg = str(e)
-            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다:\n{error_msg}")
+            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다:\n{str(e)}")
+
+    def convert_file(self, selected_service=None):
+        """파일 변환"""
+        try:
+            if not selected_service:
+                messagebox.showwarning("경고", "서비스를 선택해주세요!")
+                return
+
+            # CLL 파일 읽기
+            cll_df = pd.read_excel(self.current_file, header=4)
+            
+            # 선택된 서비스의 매핑 가져오기
+            service_mappings = self.stow_mapping.get(selected_service, [])
+            
+            # OBL 데이터프레임 생성
+            obl_data = []
+
+            # CLL 데이터 변환
+            for idx, row in cll_df.iterrows():
+                # OPT가 비어있으면 선택된 POL 값 사용
+                por_value = row['OPT'] if pd.notna(row['OPT']) and row['OPT'] != '' else self.selected_pol.get()
+
+                # POD와 FPOD 처리
+                pod = str(row['POD']) if pd.notna(row['POD']) else ''
+                fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''
+                
+                # 초기값 설정
+                mapped_port = pod
+                mapped_stow = ''
+                
+                # POD가 stow_code와 일치하는지 확인
+                for mapping in service_mappings:
+                    if pod.upper() == mapping['stow_code'].upper():
+                        mapped_port = mapping['port']
+                        mapped_stow = mapping['stow_code']
+                        break
+                
+                # OBL 데이터 생성
+                obl_row = {
+                    'No': idx + 1,
+                    'CtrNbr': row['CNTR NO'],
+                    'ShOwn': 'N',
+                    'Opr': 'MSC',
+                    'POR': por_value,
+                    'POL': self.selected_pol.get(),
+                    'TOL': self.selected_tol.get(),
+                    'POD': mapped_port,
+                    'TOD': '',
+                    'Stow': mapped_stow,
+                    'FPOD': fpod,
+                    'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
+                    'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
+                    'ForE': row['F/E'],
+                    'Rfopr': 'N',
+                    'Door': 'C',
+                    'CustH': 'N',
+                    'Fumi': 'N',
+                    'VGM': 'Y'
+                }
+                obl_data.append(obl_row)
+
+            # OBL 데이터프레임 생성 및 저장
+            obl_df = pd.DataFrame(obl_data)
+            input_dir = os.path.dirname(self.current_file)
+            base_name = os.path.splitext(os.path.basename(self.current_file))[0]
+            output_file = os.path.join(input_dir, f"{base_name}_OBL.xlsx")
+            obl_df.to_excel(output_file, index=False)
+
+            self.output_file = output_file
+            self.output_label.config(text=f"출력 파일: {output_file}")
+
+            messagebox.showinfo("성공", "변환이 완료되었습니다.")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"변환 중 오류 발생: {str(e)}")
 
     def drop_obl_file(self, event):
         """OBL 파일 드롭 처리"""
-        file_path = event.data
-        file_path = file_path.strip('{}')
+        file_path = event.data.strip('{}')
         self.current_file = file_path
 
         # 파일 정보 표시 업데이트
@@ -734,584 +851,6 @@ class ContainerConverter:
             btn.configure(bg='SystemButtonFace')
         # 선택된 버튼만 노란색으로
         self.tol_buttons[terminal].configure(bg='yellow')
-
-    def convert_file(self):
-        """단일 CLL 파일 변환"""
-        try:
-            # 선택된 서비스 확인
-            selected_service = self.selected_service.get()
-            if not selected_service:
-                messagebox.showwarning("경고", "Service Name을 선택해주세요!")
-                return
-
-            # CLL 파일 읽기
-            cll_df = pd.read_excel(self.current_file, header=4)
-
-            # 선택된 서비스의 매핑 가져오기
-            service_mappings = self.stow_mapping.get(selected_service, [])
-
-            # OBL 데이터프레임 생성
-            obl_data = []
-
-            # CLL 데이터 변환
-            for idx, row in cll_df.iterrows():
-                # OPT가 비어있으면 선택된 POL 값 사용
-                por_value = row['OPT'] if pd.notna(row['OPT']) and row['OPT'] != '' else self.selected_pol.get()
-
-                # POD와 FPOD 처리
-                pod = str(row['POD']) if pd.notna(row['POD']) else ''
-                fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''  # FPOD는 CLL의 FDP 값 사용
-                
-                # 초기값 설정
-                mapped_port = pod  # POD 초기값
-                mapped_stow = ''   # Stow 초기값
-                
-                # POD가 stow_code와 일치하는지 확인
-                for mapping in service_mappings:
-                    if pod.upper() == mapping['stow_code'].upper():
-                        mapped_port = mapping['port']      # POD를 port 값으로 설정
-                        mapped_stow = mapping['stow_code'] # Stow를 stow_code 값으로 설정
-                        break
-
-                obl_row = {
-                    'No': idx + 1,
-                    'CtrNbr': row['CNTR NO'],
-                    'ShOwn': 'N',
-                    'Opr': 'MSC',
-                    'POR': por_value,
-                    'POL': self.selected_pol.get(),
-                    'TOL': self.selected_tol.get(),
-                    'POD': mapped_port,
-                    'TOD': '',
-                    'Stow': mapped_stow,
-                    'FPOD': fpod,  # FPOD는 원래 값 유지
-                    'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
-                    'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
-                    'ForE': row['F/E'],
-                    'Lbl': '',
-                    'Rfopr': 'N',
-                    'Rftemp': row['R/F'].replace(' CEL', '') if pd.notna(row['R/F']) else '',
-                    'OvDH': row['OH'],
-                    'OvDF': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
-                    'OvDA': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
-                    'OvDP': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
-                    'OvDS': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
-                    'OvSH': '',
-                    'OvSF': '',
-                    'OvSA': '',
-                    'OvSP': '',
-                    'OvSS': '',
-                    'BL': '',
-                    'HI': '',
-                    'AC': '',
-                    'Flip': '',
-                    'Door': 'C',
-                    'CustH': 'N',
-                    'LenBB': '',
-                    'BrthBB': '',
-                    'HgtBB': '',
-                    'WgtBB': '',
-                    'Fumi': 'N',
-                    'FuDt': '',
-                    'VenDt': '',
-                    'Venti': '',
-                    'Damag': '',
-                    'PPK': '',
-                    'Food': '',
-                    'Resi': '',
-                    'Book': '',
-                    'Cold': '',
-                    'Catm': '',
-                    'VGM': 'Y',
-                    'VGM Weighting Method': '',
-                    'HVC': '',
-                    'BN1': '',
-                    'BN2': '',
-                    'BN3': '',
-                    'BN4': '',
-                    'Harmonised system codes': '',
-                    'Description': '',
-                    'Flexitank': '',
-                    'UNNO': row['UNDG'],
-                    'Class': row['IMDG'],
-                    'PSN': '',
-                    'N.Weight': '',
-                    'S.Risk1': '',
-                    'S.Risk2': '',
-                    'S.Risk3': '',
-                    'P.Group': '',
-                    'LQ': '',
-                    'EQ': '',
-                    'FP': '',
-                    'IMDG Remark': '',
-                    'Sub Index': '',
-                    'Inf type': '',
-                    'Address': '',
-                    'Street': '',
-                    'City': '',
-                    'Postal Code': '',
-                    'Country Code': '',
-                    'Country': '',
-                    'Sub Index_1': '',  # 첫 번째 Sub Index 열
-                    'Remark': ''
-                }
-                obl_data.append(obl_row)
-
-            # EMPTY 컨테이너 추가 로직
-            last_no = len(obl_data)
-            empty_container_num = 1
-            for pod_entry, sztp_entry, qty_entry in self.empty_entries:
-                pod = pod_entry.get()
-                sztp = sztp_entry.get()
-                qty = qty_entry.get()
-
-                if pod not in ["POD", ""] and sztp not in ["SzTp", ""] and qty not in ["수량", ""]:
-                    try:
-                        qty = int(qty)
-                        for i in range(qty):
-                            empty_row = dict.fromkeys(obl_data[0].keys(), '')
-                            
-                            # POD에 대한 매핑 확인
-                            mapped_port = pod
-                            mapped_stow = ''
-                            
-                            # POD가 stow_code와 일치하는지 확인
-                            for mapping in service_mappings:
-                                if pod.upper() == mapping['stow_code'].upper():
-                                    # stow_code가 일치하면 해당 port를 POD로 사용
-                                    mapped_port = mapping['port']
-                                    mapped_stow = mapping['stow_code']
-                                    break
-                                elif pod.upper() == mapping['port'].upper():
-                                    # port가 일치하면 해당 stow_code 사용
-                                    mapped_port = mapping['port']
-                                    mapped_stow = mapping['stow_code']
-                                    break
-                            
-                            empty_row.update({
-                                'No': last_no + 1,
-                                'CtrNbr': f"MSCU{empty_container_num:07d}",
-                                'ShOwn': 'N',
-                                'Opr': 'MSC',
-                                'POR': self.selected_pol.get(),
-                                'POL': self.selected_pol.get(),
-                                'TOL': self.selected_tol.get(),
-                                'POD': mapped_port,
-                                'FPOD': mapped_port,
-                                'SzTp': int(sztp),
-                                'Wgt': int(2500 if str(sztp).startswith('2') else 4700 if str(sztp).startswith('4') else 0),
-                                'ForE': 'E',
-                                'Rfopr': 'N',
-                                'Door': 'C',
-                                'CustH': 'N',
-                                'Fumi': 'N',
-                                'VGM': 'Y',
-                                'Stow': mapped_stow
-                            })
-                            obl_data.append(empty_row)
-                            last_no += 1
-                            empty_container_num += 1
-                    except ValueError:
-                        messagebox.showwarning("경고", f"잘못된 수량 형식: {qty}")
-
-            # OBL 데이터프레임 생성
-            obl_df = pd.DataFrame(obl_data)
-
-            # 파일 저장
-            input_dir = os.path.dirname(self.current_file)
-            base_name = os.path.splitext(os.path.basename(self.current_file))[0]
-            output_file = os.path.join(input_dir, f"{base_name}_OBL.xlsx")
-            obl_df = obl_df.rename(columns={
-                'Sub Index_1': 'Sub Index'
-            })
-            obl_df.to_excel(output_file, index=False)
-
-            self.output_file = output_file
-            self.output_label.config(text=f"출력 파일: {output_file}")
-
-            # 단일 탭의 Summary만 업데이트
-            self.update_single_summary(cll_df)
-            
-            messagebox.showinfo("성공", "변환이 완료되었습니다.")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"변환 중 오류 발생: {str(e)}")
-
-    def update_single_summary(self, df):
-        """단일 CLL 파일의 Container Summary 업데이트"""
-        try:
-            self.single_summary_text.delete(1.0, tk.END)
-            
-            summary_text = "=== 단일 CLL 변환 Summary ===\n"
-            summary_text += "================================\n\n"
-            
-            # 데이터프레임 유효성 검사
-            if df is None or df.empty:
-                raise ValueError("유효한 데이터가 없습니다.")
-            
-            # 컬럼 존재 여부 확인
-            required_columns = ['T&S', 'F/E', 'POD']
-            for col in required_columns:
-                if col not in df.columns:
-                    raise ValueError(f"필요한 컬럼이 없습니다: {col}")
-            
-            # 데이터 처리
-            total_containers = len(df)
-            
-            # 각 컬럼별 카운트 계산 (NaN 값 제외)
-            size_type_counts = df['T&S'].dropna().value_counts()
-            full_empty_counts = df['F/E'].dropna().value_counts()
-            pod_counts = df['POD'].dropna().value_counts()
-            
-            # Summary 텍스트 구성
-            summary_text += f"Total Containers: {total_containers}\n"
-            summary_text += "--------------------------------\n\n"
-            
-            summary_text += "=== Size Type Summary ===\n"
-            for sz_tp, count in size_type_counts.items():
-                if pd.notna(sz_tp):  # NaN 값 체크
-                    summary_text += f"{sz_tp}: {count}\n"
-            summary_text += "--------------------------------\n\n"
-            
-            summary_text += "=== Full/Empty Summary ===\n"
-            for fe, count in full_empty_counts.items():
-                if pd.notna(fe):  # NaN 값 체크
-                    summary_text += f"{fe}: {count}\n"
-            summary_text += "--------------------------------\n\n"
-            
-            summary_text += "=== POD Summary ===\n"
-            for pod, count in pod_counts.items():
-                if pd.notna(pod):  # NaN 값 체크
-                    summary_text += f"{pod}: {count}\n"
-            summary_text += "--------------------------------"
-            
-            self.single_summary_text.insert(tk.END, summary_text)
-            
-        except Exception as e:
-            print(f"Summary 생성 중 오류 발생: {str(e)}")  # 디버깅용
-            self.single_summary_text.delete(1.0, tk.END)
-            self.single_summary_text.insert(tk.END, "단일 CLL 탭에서 파일 변환 시 Summary가 표시됩니다.")
-
-    def drop_master_cll(self, event):
-        """Master CLL 파일 드롭 처리"""
-        if not self.selected_pol.get() or not self.selected_tol.get():
-            messagebox.showwarning("경고", "POL과 TOL을 먼저 선택해주세요!")
-            return
-
-        file_path = event.data.strip('{}').strip('"')
-        if not os.path.exists(file_path):
-            messagebox.showerror("오류", "파일이 존재하지 않습니다.")
-            return
-
-        self.master_file = file_path
-        self.master_path_label.config(text=f"파일 경로: {file_path}")
-        self.master_label.config(text="Master 파일이 선택되었습니다")
-        
-        # Slave 프레임 활성화
-        self.slave_frame.pack(pady=10, padx=10, fill="x")
-
-    def drop_slave_cll(self, event):
-        """Slave CLL 파일 드롭 처리"""
-        if not hasattr(self, 'master_file'):
-            messagebox.showwarning("경고", "Master 파일을 먼저 선택해주세요!")
-            return
-
-        file_path = event.data.strip('{}').strip('"')
-        if not os.path.exists(file_path):
-            messagebox.showerror("오류", "파일이 존재하지 않습니다.")
-            return
-
-        self.slave_file = file_path
-        self.slave_path_label.config(text=f"파일 경로: {file_path}")
-        self.slave_label.config(text="Slave 파일이 선택되었습니다")
-        
-        # Slave 파일이 선택되면 바로 병합 처리 시작
-        self.combine_cll_files()
-
-    def select_multi_pol(self, port):
-        """Multi 탭 POL 버튼 선택 처리"""
-        self.selected_pol.set(port)
-        # 모든 버튼 원래 색으로
-        for btn in self.multi_pol_buttons.values():
-            btn.configure(bg='SystemButtonFace')
-        # 선택된 버튼만 노란색으로
-        self.multi_pol_buttons[port].configure(bg='yellow')
-
-    def select_multi_tol(self, terminal):
-        """Multi 탭 TOL 버튼 선택 처리"""
-        self.selected_tol.set(terminal)
-        # 모든 버튼 원래 색으로
-        for btn in self.multi_tol_buttons.values():
-            btn.configure(bg='SystemButtonFace')
-        # 선택된 버튼만 노란색으로
-        for btn_text, value in self.tol_values.items():
-            if value == terminal:
-                self.multi_tol_buttons[btn_text].configure(bg='yellow')
-
-    def combine_cll_files(self):
-        """Master와 Slave CLL 파일 병합"""
-        try:
-            # 선택된 서비스 확인
-            selected_service = self.selected_service.get()
-            if not selected_service:
-                messagebox.showwarning("경고", "Service Name을 선택해주세요!")
-                return
-
-            def process_cll_file(file_path, start_row):
-                try:
-                    cll_df = pd.read_excel(file_path, header=4)
-                    processed_data = []
-                    row_count = start_row
-
-                    # 선택된 서비스의 매핑 가져오기
-                    service_mappings = self.stow_mapping.get(selected_service, [])
-
-                    for idx, row in cll_df.iterrows():
-                        if pd.notna(row['CNTR NO']):
-                            # POD 값 가져오기
-                            pod = str(row['POD']) if pd.notna(row['POD']) else ''
-                            fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''  # FPOD는 CLL의 FDP 값 사용
-                            
-                            # 초기값 설정
-                            mapped_port = pod  # POD 초기값
-                            mapped_stow = ''   # Stow 초기값
-                            
-                            # POD가 stow_code와 일치하는지 확인
-                            for mapping in service_mappings:
-                                if pod.upper() == mapping['stow_code'].upper():
-                                    mapped_port = mapping['port']      # POD를 port 값으로 설정
-                                    mapped_stow = mapping['stow_code'] # Stow를 stow_code 값으로 설정
-                                    break
-
-                            obl_row = {
-                                'No': row_count,
-                                'CtrNbr': row['CNTR NO'],
-                                'ShOwn': 'N',
-                                'Opr': 'MSC',
-                                'POR': row['OPT'] if pd.notna(row['OPT']) else self.selected_pol.get(),
-                                'POL': self.selected_pol.get(),
-                                'TOL': self.selected_tol.get(),
-                                'POD': mapped_port,
-                                'TOD': '',
-                                'Stow': mapped_stow,
-                                'FPOD': fpod,  # FPOD는 원래 값 유지
-                                'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
-                                'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
-                                'ForE': row['F/E'],
-                                'Lbl': '',
-                                'Rfopr': 'N',
-                                'Rftemp': row['R/F'].replace(' CEL', '') if pd.notna(row['R/F']) else '',
-                                'OvDH': row['OH'],
-                                'OvDF': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
-                                'OvDA': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
-                                'OvDP': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
-                                'OvDS': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
-                                'OvSH': '',
-                                'OvSF': '',
-                                'OvSA': '',
-                                'OvSP': '',
-                                'OvSS': '',
-                                'BL': '',
-                                'HI': '',
-                                'AC': '',
-                                'Flip': '',
-                                'Door': 'C',
-                                'CustH': 'N',
-                                'LenBB': '',
-                                'BrthBB': '',
-                                'HgtBB': '',
-                                'WgtBB': '',
-                                'Fumi': 'N',
-                                'FuDt': '',
-                                'VenDt': '',
-                                'Venti': '',
-                                'Damag': '',
-                                'PPK': '',
-                                'Food': '',
-                                'Resi': '',
-                                'Book': '',
-                                'Cold': '',
-                                'Catm': '',
-                                'VGM': 'Y',
-                                'VGM Weighting Method': '',
-                                'HVC': '',
-                                'BN1': '',
-                                'BN2': '',
-                                'BN3': '',
-                                'BN4': '',
-                                'Harmonised system codes': '',
-                                'Description': '',
-                                'Flexitank': '',
-                                'UNNO': row['UNDG'],
-                                'Class': row['IMDG'],
-                                'PSN': '',
-                                'N.Weight': '',
-                                'S.Risk1': '',
-                                'S.Risk2': '',
-                                'S.Risk3': '',
-                                'P.Group': '',
-                                'LQ': '',
-                                'EQ': '',
-                                'FP': '',
-                                'IMDG Remark': '',
-                                'Sub Index': '',
-                                'Inf type': '',
-                                'Address': '',
-                                'Street': '',
-                                'City': '',
-                                'Postal Code': '',
-                                'Country Code': '',
-                                'Country': '',
-                                'Sub Index_1': '',  # 첫 번째 Sub Index 열
-                                'Remark': ''
-                            }
-                            processed_data.append(obl_row)
-                            row_count += 1
-                    return processed_data
-                except Exception as e:
-                    raise Exception(f"파일 처리 중 오류 발생: {file_path}")
-
-            # Master와 Slave 파일 처리
-            master_data = process_cll_file(self.master_file, 1)
-            slave_data = process_cll_file(self.slave_file, len(master_data) + 1)
-            
-            all_data = master_data + slave_data
-            
-            # DataFrame 생성 및 저장
-            combined_df = pd.DataFrame(all_data)
-            save_dir = os.path.dirname(self.master_file)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(save_dir, f"Combined_OBL_{timestamp}.xlsx")
-            
-            # 파일 저장
-            combined_df.to_excel(output_file, index=False)
-            
-            # 결과 표시
-            self.result_label.config(text=f"출력 파일: {output_file}")
-            
-            # 멀티 탭의 Summary만 업데이트
-            self.update_multi_summary(combined_df)
-            
-            # 단일 탭의 Summary는 초기화
-            if hasattr(self, 'single_summary_text'):
-                self.single_summary_text.delete(1.0, tk.END)
-                self.single_summary_text.insert(tk.END, "단일 CLL 탭에서 파일 변환 시 Summary가 표시됩니다.")
-            
-            messagebox.showinfo("성공", f"CLL 파일들이 성공적으로 병합되었습니다.\n총 {len(all_data)}개의 컨테이너가 처리되었습니다.")
-            
-        except Exception as e:
-            print(f"Error in combine_cll_files: {str(e)}")  # 디버깅용
-            messagebox.showerror("오류", str(e))
-
-    def update_multi_summary(self, df):
-        """병합된 CLL 파일들의 Container Summary 업데이트"""
-        try:
-            self.multi_summary_text.delete(1.0, tk.END)
-            
-            summary_text = "=== CLL 병합 Summary ===\n"
-            summary_text += "================================\n\n"
-            
-            # 데이터프레임 유효성 검사
-            if df is None or df.empty:
-                raise ValueError("유효한 데이터가 없습니다.")
-            
-            # 컬럼 존재 여부 확인
-            required_columns = ['SzTp', 'ForE', 'POD']
-            for col in required_columns:
-                if col not in df.columns:
-                    raise ValueError(f"필요한 컬럼이 없습니다: {col}")
-            
-            # 데이터 처리
-            total_containers = len(df)
-            
-            # 각 컬럼별 카운트 계산 (NaN 값 제외)
-            size_type_counts = df['SzTp'].dropna().value_counts()
-            full_empty_counts = df['ForE'].dropna().value_counts()
-            pod_counts = df['POD'].dropna().value_counts()
-            
-            # Summary 텍스트 구성
-            summary_text += f"Total Containers: {total_containers}\n"
-            summary_text += "--------------------------------\n\n"
-            
-            summary_text += "=== Size Type Summary ===\n"
-            for sz_tp, count in size_type_counts.items():
-                if pd.notna(sz_tp):
-                    summary_text += f"{sz_tp}: {count}\n"
-            summary_text += "--------------------------------\n\n"
-            
-            summary_text += "=== Full/Empty Summary ===\n"
-            for fe, count in full_empty_counts.items():
-                if pd.notna(fe):
-                    summary_text += f"{fe}: {count}\n"
-            summary_text += "--------------------------------\n\n"
-            
-            summary_text += "=== POD Summary ===\n"
-            for pod, count in pod_counts.items():
-                if pd.notna(pod):
-                    summary_text += f"{pod}: {count}\n"
-            summary_text += "--------------------------------"
-            
-            self.multi_summary_text.insert(tk.END, summary_text)
-            
-        except Exception as e:
-            self.multi_summary_text.delete(1.0, tk.END)
-            self.multi_summary_text.insert(tk.END, f"Summary 생성 중 오류 발생: {str(e)}")
-
-    def reset_all(self):
-        """프로그램 상태 초기화"""
-        # POL/TOL 버튼 초기화 (단일 탭)
-        for btn in self.pol_buttons.values():
-            btn.configure(bg='SystemButtonFace')
-        for btn in self.tol_buttons.values():
-            btn.configure(bg='SystemButtonFace')
-        
-        # POL/TOL 버튼 초기화 (멀티 탭)
-        for btn in self.multi_pol_buttons.values():
-            btn.configure(bg='SystemButtonFace')
-        for btn in self.multi_tol_buttons.values():
-            btn.configure(bg='SystemButtonFace')
-        
-        # 선택값 초기화
-        self.selected_pol.set('')
-        self.selected_tol.set('')
-        
-        # 파일 경로 레이블 초기화
-        self.input_label.config(text="입력 파일: 없음")
-        self.output_label.config(text="출력 파일: 없음")
-        self.master_path_label.config(text="파일 경로: 없음")
-        self.slave_path_label.config(text="파일 경로: 없음")
-        self.result_label.config(text="출력 파일: 없음")
-        
-        # Summary 텍스트 초기화
-        self.single_summary_text.delete(1.0, tk.END)
-        self.single_summary_text.insert(tk.END, "단일 CLL 탭에서 파일 변환 시 Summary가 표시됩니다.")
-        self.multi_summary_text.delete(1.0, tk.END)
-        self.multi_summary_text.insert(tk.END, "Multi CLL 탭에서 파일 변환 시 Summary가 표시됩니다.")
-        
-        # 파일 관련 변수 초기화
-        self.current_file = None
-        self.output_file = None
-        if hasattr(self, 'master_file'):
-            delattr(self, 'master_file')
-        if hasattr(self, 'slave_file'):
-            delattr(self, 'slave_file')
-
-        # Entry 위젯 초기화
-        for pod_entry, sztp_entry, qty_entry in self.empty_entries:
-            # Entry 위젯 상태 초기화
-            pod_entry.delete(0, tk.END)
-            sztp_entry.delete(0, tk.END)
-            qty_entry.delete(0, tk.END)
-            
-            # 플레이스홀더 텍스트 설정
-            pod_entry.insert(0, "POD")
-            sztp_entry.insert(0, "SzTp")
-            qty_entry.insert(0, "수량")
-            
-            # Entry 위젯 상태 설정
-            pod_entry.config(state='normal')
-            sztp_entry.config(state='normal')
-            qty_entry.config(state='normal')
 
     def drop_itps_file(self, event):
         """ITPS 파일 드롭 처리"""
@@ -1631,7 +1170,7 @@ class ContainerConverter:
                 # 선택된 서비스에 대한 매핑만 표시
                 if selected_service in self.stow_mapping:
                     for mapping in self.stow_mapping[selected_service]:
-                        preview_text += f"Port: {mapping['port']}\n"
+                        preview_text += f"POD: {mapping['port']}\n"
                         preview_text += f"Stow Code: {mapping['stow_code']}\n"
                         preview_text += "------------------------\n"
             else:
@@ -1639,7 +1178,7 @@ class ContainerConverter:
                 for service_name, mappings in self.stow_mapping.items():
                     preview_text += f"Service Name: {service_name}\n"
                     for mapping in mappings:
-                        preview_text += f"Port: {mapping['port']}\n"
+                        preview_text += f"POD: {mapping['port']}\n"
                         preview_text += f"Stow Code: {mapping['stow_code']}\n"
                     preview_text += "------------------------\n"
                 
@@ -1791,7 +1330,7 @@ class ContainerConverter:
             'PNCOC': {'pol': 'KRPUS', 'tol': 'KRPUSPN'},
             'BCTHD': {'pol': 'KRPUS', 'tol': 'KRPUSBC'},
             'HJNPC': {'pol': 'KRPUS', 'tol': 'KRPUSAP'},
-            'ICTPC': {'pol': 'KRINC', 'tol': 'KRINCAH'},
+            'ICTPC': {'pol': 'KRINCAH', 'tol': 'KRINCAH'},
             'KEGWC': {'pol': 'KRKAN', 'tol': 'KRKANKT'}
         }
         
@@ -1810,147 +1349,338 @@ class ContainerConverter:
         
         # ... existing code ...
 
+    def reset_all(self):
+        """프로그램 상태 초기화"""
+        # POL/TOL 버튼 초기화 (단일 탭)
+        for btn in self.pol_buttons.values():
+            btn.configure(bg='SystemButtonFace')
+        for btn in self.tol_buttons.values():
+            btn.configure(bg='SystemButtonFace')
+        
+        # POL/TOL 버튼 초기화 (멀티 탭)
+        for btn in self.multi_pol_buttons.values():
+            btn.configure(bg='SystemButtonFace')
+        for btn in self.multi_tol_buttons.values():
+            btn.configure(bg='SystemButtonFace')
+        
+        # 선택값 초기화
+        self.selected_pol.set('')
+        self.selected_tol.set('')
+        
+        # 파일 경로 레이블 초기화
+        self.input_label.config(text="입력 파일: 없음")
+        self.output_label.config(text="출력 파일: 없음")
+        self.master_path_label.config(text="파일 경로: 없음")
+        self.slave_path_label.config(text="파일 경로: 없음")
+        self.result_label.config(text="출력 파일: 없음")
+        
+        # Summary 텍스트 초기화
+        self.single_summary_text.delete(1.0, tk.END)
+        self.single_summary_text.insert(tk.END, "단일 CLL 탭에서 파일 변환 시 Summary가 표시됩니다.")
+        self.multi_summary_text.delete(1.0, tk.END)
+        self.multi_summary_text.insert(tk.END, "Multi CLL 탭에서 파일 변환 시 Summary가 표시됩니다.")
+        
+        # 파일 관련 변수 초기화
+        self.current_file = None
+        self.output_file = None
+        if hasattr(self, 'master_file'):
+            delattr(self, 'master_file')
+        if hasattr(self, 'slave_file'):
+            delattr(self, 'slave_file')
+
+        # Entry 위젯 초기화
+        for pod_entry, sztp_entry, qty_entry in self.empty_entries:
+            # Entry 위젯 상태 초기화
+            pod_entry.delete(0, tk.END)
+            sztp_entry.delete(0, tk.END)
+            qty_entry.delete(0, tk.END)
+            
+            # 플레이스홀더 텍스트 설정
+            pod_entry.insert(0, "POD")
+            sztp_entry.insert(0, "SzTp")
+            qty_entry.insert(0, "수량")
+            
+            # Entry 위젯 상태 설정
+            pod_entry.config(state='normal')
+            sztp_entry.config(state='normal')
+            qty_entry.config(state='normal')
+
     def run(self):
         self.root.mainloop()
 
-    def find_matching_services(self, pod_list):
-        """POD 리스트와 일치하는 서비스 찾기"""
-        matching_services = {}
-        
-        for service_name, mappings in self.stow_mapping.items():
-            matches = []
-            for pod in pod_list:
-                for mapping in mappings:
-                    if pod.upper() == mapping['port'].upper() or pod.upper() == mapping['stow_code'].upper():
-                        matches.append({
-                            'pod': pod,
-                            'port': mapping['port'],
-                            'stow_code': mapping['stow_code']
-                        })
-            if matches:
-                matching_services[service_name] = matches
-        
-        return matching_services
-
-    def show_service_selection_dialog(self, matching_services):
-        """서비스 선택 다이얼로그 표시"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("서비스 선택")
-        dialog.geometry("600x400")
-        
-        # 설명 레이블
-        ttk.Label(dialog, text="발견된 POD와 일치하는 서비스 목록입니다.\n적용할 서비스를 선택해주세요.").pack(pady=10)
-        
-        # 서비스 정보 표시 영역
-        info_frame = ttk.Frame(dialog)
-        info_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        # 텍스트 위젯으로 매칭 정보 표시
-        info_text = tk.Text(info_frame, height=10, width=50)
-        info_text.pack(fill="both", expand=True)
-        
-        # 서비스별 매칭 정보 표시
-        for service_name, matches in matching_services.items():
-            info_text.insert(tk.END, f"\n=== {service_name} ===\n")
-            for match in matches:
-                info_text.insert(tk.END, f"POD: {match['pod']} -> Stow Code: {match['stow_code']}\n")
-        
-        info_text.config(state='disabled')  # 읽기 전용으로 설정
-        
-        # 서비스 선택 콤보박스
-        selected_service = tk.StringVar()
-        combo = ttk.Combobox(dialog, textvariable=selected_service, values=list(matching_services.keys()))
-        combo.pack(pady=10)
-        
-        # 결과 저장용 변수
-        dialog.result = None
-        
-        # 확인/취소 버튼
-        def on_ok():
-            dialog.result = selected_service.get()
-            dialog.destroy()
-        
-        def on_cancel():
-            dialog.destroy()
-        
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="확인", command=on_ok).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="취소", command=on_cancel).pack(side="left", padx=5)
-        
-        # 모달 대화상자로 실행
-        dialog.transient(self.root)
-        dialog.grab_set()
-        self.root.wait_window(dialog)
-        
-        return dialog.result
-
-    def apply_stow_codes(self, df, service_name):
-        """선택된 서비스의 Stow Code 적용"""
-        if not service_name or service_name not in self.stow_mapping:
-            return df
-        
-        mappings = self.stow_mapping[service_name]
-        
-        # DataFrame 복사
-        updated_df = df.copy()
-        
-        # 각 행에 대해 매핑 적용
-        for idx, row in updated_df.iterrows():
-            pod = str(row['POD']).strip().upper()
-            for mapping in mappings:
-                if pod == mapping['port'].upper() or pod == mapping['stow_code'].upper():
-                    updated_df.at[idx, 'POD'] = mapping['port']
-                    updated_df.at[idx, 'Stow'] = mapping['stow_code']
-                    break
-        
-        return updated_df
-
-    def process_obl_file(self, file_path):
-        """OBL 파일 처리"""
+    def drop_master_cll(self, event):
+        """Master CLL 파일 드롭 처리"""
         try:
-            # 엑셀 파일 읽기
-            df = pd.read_excel(file_path)
+            file_path = event.data.strip('{}').strip('"')
+            if not os.path.exists(file_path):
+                messagebox.showerror("오류", "파일이 존재하지 않습니다.")
+                return
+
+            # 엑셀 파일에서 (4,12) 위치의 터미널 코드 읽기
+            df_check = pd.read_excel(file_path, header=None)
+            terminal_code = str(df_check.iloc[3, 11]).strip()
+
+            if not terminal_code:
+                messagebox.showerror("오류", "(4,12) 위치에서 터미널 코드를 찾을 수 없습니다.")
+                return
+
+            # 터미널 코드를 기반으로 POL, TOL 값 자동 설정
+            port_info = self.terminal_to_port_mapping(terminal_code)
+            
+            if not port_info['pol'] or not port_info['tol']:
+                messagebox.showerror("오류", f"터미널 코드 '{terminal_code}'에 대한 매핑을 찾을 수 없습니다.")
+                return
+
+            # POL, TOL 설정
+            self.selected_pol.set(port_info['pol'])
+            self.selected_tol.set(port_info['tol'])
+
+            # POL 버튼 색상 업데이트 (멀티 탭)
+            for port, btn in self.multi_pol_buttons.items():
+                if port == port_info['pol']:
+                    btn.configure(bg='yellow')
+                else:
+                    btn.configure(bg='SystemButtonFace')
+
+            # TOL 버튼 색상 업데이트 (멀티 탭)
+            for terminal, btn in self.multi_tol_buttons.items():
+                if terminal == port_info['tol']:
+                    btn.configure(bg='yellow')
+                else:
+                    btn.configure(bg='SystemButtonFace')
+
+            self.master_file = file_path
+            self.master_path_label.config(text=f"파일 경로: {os.path.basename(file_path)}")
+            self.master_label.config(text="Master 파일이 선택되었습니다")
             
             # POD 목록 추출
+            df = pd.read_excel(file_path, header=4)
             pod_list = df['POD'].unique().tolist()
             
-            # 매칭되는 서비스 찾기
-            matching_services = self.find_matching_services(pod_list)
+            # Master 파일의 POD 목록과 합치기
+            master_df = pd.read_excel(self.master_file, header=4)
+            master_pods = master_df['POD'].unique().tolist()
+            all_pods = list(set(pod_list + master_pods))
             
-            if not matching_services:
-                messagebox.showwarning("경고", "일치하는 서비스를 찾을 수 없습니다.")
-                return
-            
-            # 서비스 선택 다이얼로그 표시
-            selected_service = self.show_service_selection_dialog(matching_services)
-            
-            if not selected_service:
-                return
-            
-            # Stow Code 적용
-            updated_df = self.apply_stow_codes(df, selected_service)
-            
-            # 파일 저장
-            save_path = os.path.join(
-                os.path.dirname(file_path),
-                f"{os.path.splitext(os.path.basename(file_path))[0]}_updated.xlsx"
-            )
-            updated_df.to_excel(save_path, index=False)
-            
-            messagebox.showinfo("성공", f"Stow Code가 적용되었습니다.\n저장 위치: {save_path}")
-            
-        except Exception as e:
-            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}")
+            # 매칭되는 서비스 찾기 (아직 서비스가 선택되지 않은 경우)
+            if not hasattr(self, 'selected_service'):
+                matching_services = self.find_matching_services(all_pods)
+                if matching_services:
+                    selected_service = self.show_service_selection_dialog(matching_services)
+                    if selected_service:
+                        self.selected_service = selected_service
+                else:
+                    messagebox.showwarning("경고", "POD와 일치하는 서비스를 찾을 수 없습니다.")
+                    return
 
-    def drop_obl_for_stow(self, event):
-        """OBL 파일 드롭 처리"""
-        file_path = event.data.strip('{}').strip('"')
-        if not os.path.exists(file_path):
-            messagebox.showerror("오류", "파일이 존재하지 않습니다.")
-            return
-        
-        self.process_obl_file(file_path)
+            # Slave 프레임 활성화
+            self.slave_frame.pack(pady=10, padx=10, fill="x")
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Error in drop_master_cll: {error_msg}")  # 디버깅용
+            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다:\n{error_msg}")
+
+    def drop_slave_cll(self, event):
+        """Slave CLL 파일 드롭 처리"""
+        try:
+            if not hasattr(self, 'master_file'):
+                messagebox.showwarning("경고", "Master 파일을 먼저 선택해주세요!")
+                return
+
+            file_path = event.data.strip('{}').strip('"')
+            if not os.path.exists(file_path):
+                messagebox.showerror("오류", "파일이 존재하지 않습니다.")
+                return
+
+            # 엑셀 파일에서 (4,12) 위치의 터미널 코드 읽기
+            df_check = pd.read_excel(file_path, header=None)
+            terminal_code = str(df_check.iloc[3, 11]).strip()
+
+            if not terminal_code:
+                messagebox.showerror("오류", "(4,12) 위치에서 터미널 코드를 찾을 수 없습니다.")
+                return
+
+            # 터미널 코드 확인
+            port_info = self.terminal_to_port_mapping(terminal_code)
+            if port_info['pol'] != self.selected_pol.get() or port_info['tol'] != self.selected_tol.get():
+                messagebox.showerror("오류", "Master 파일과 POL/TOL이 일치하지 않습니다.")
+                return
+
+            self.slave_file = file_path
+            self.slave_path_label.config(text=f"파일 경로: {os.path.basename(file_path)}")
+            self.slave_label.config(text="Slave 파일이 선택되었습니다")
+            
+            # POD 목록 추출
+            df = pd.read_excel(file_path, header=4)
+            pod_list = df['POD'].unique().tolist()
+            
+            # Master 파일의 POD 목록과 합치기
+            master_df = pd.read_excel(self.master_file, header=4)
+            master_pods = master_df['POD'].unique().tolist()
+            all_pods = list(set(pod_list + master_pods))
+            
+            # 매칭되는 서비스 찾기 (아직 서비스가 선택되지 않은 경우)
+            if not hasattr(self, 'selected_service'):
+                matching_services = self.find_matching_services(all_pods)
+                if matching_services:
+                    selected_service = self.show_service_selection_dialog(matching_services)
+                    if selected_service:
+                        self.selected_service = selected_service
+                else:
+                    messagebox.showwarning("경고", "POD와 일치하는 서비스를 찾을 수 없습니다.")
+                    return
+
+            # 파일 병합 처리 시작
+            self.combine_cll_files()
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Error in drop_slave_cll: {error_msg}")  # 디버깅용
+            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다:\n{error_msg}")
+
+    def combine_cll_files(self):
+        """Master와 Slave CLL 파일 병합"""
+        try:
+            # Master와 Slave 파일 읽기
+            master_df = pd.read_excel(self.master_file, header=4)
+            slave_df = pd.read_excel(self.slave_file, header=4)
+
+            # 선택된 서비스의 매핑 가져오기
+            service_mappings = self.stow_mapping.get(self.selected_service, [])
+
+            # OBL 데이터프레임 생성
+            obl_data = []
+
+            # Master와 Slave 데이터 변환 및 병합
+            for df in [master_df, slave_df]:
+                for idx, row in df.iterrows():
+                    # OPT가 비어있으면 선택된 POL 값 사용
+                    por_value = row['OPT'] if pd.notna(row['OPT']) and row['OPT'] != '' else self.selected_pol.get()
+
+                    # POD와 FPOD 처리
+                    pod = str(row['POD']) if pd.notna(row['POD']) else ''
+                    fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''
+                    
+                    # 초기값 설정
+                    mapped_port = pod
+                    mapped_stow = ''
+                    
+                    # POD가 stow_code와 일치하는지 확인
+                    for mapping in service_mappings:
+                        if pod.upper() == mapping['stow_code'].upper():
+                            mapped_port = mapping['port']
+                            mapped_stow = mapping['stow_code']
+                            break
+
+                    # OBL 데이터 생성
+                    obl_row = {
+                        'No': len(obl_data) + 1,  # 연속된 번호 부여
+                        'CtrNbr': row['CNTR NO'],
+                        'ShOwn': 'N',
+                        'Opr': 'MSC',
+                        'POR': por_value,
+                        'POL': self.selected_pol.get(),
+                        'TOL': self.selected_tol.get(),
+                        'POD': mapped_port,
+                        'TOD': '',
+                        'Stow': mapped_stow,
+                        'FPOD': fpod,
+                        'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
+                        'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
+                        'ForE': row['F/E'],
+                        'Rfopr': 'N',
+                        'Door': 'C',
+                        'CustH': 'N',
+                        'Fumi': 'N',
+                        'VGM': 'Y'
+                    }
+                    obl_data.append(obl_row)
+
+            # OBL 데이터프레임 생성 및 저장
+            combined_df = pd.DataFrame(obl_data)
+            output_dir = os.path.dirname(self.master_file)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(output_dir, f"Combined_OBL_{timestamp}.xlsx")
+            combined_df.to_excel(output_file, index=False)
+
+            # 결과 표시
+            self.result_label.config(text=f"출력 파일: {os.path.basename(output_file)}")
+
+            # Summary 업데이트
+            self.update_multi_summary(combined_df)
+
+            messagebox.showinfo("성공", "파일이 성공적으로 병합되었습니다.")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"파일 병합 중 오류가 발생했습니다: {str(e)}")
+
+    def update_multi_summary(self, df):
+        """Multi CLL 탭의 Summary 업데이트"""
+        try:
+            summary_text = "=== Container Summary ===\n\n"
+            
+            # 전체 컨테이너 수
+            total_containers = len(df)
+            summary_text += f"전체 컨테이너 수: {total_containers}\n\n"
+            
+            # Size Type별 통계
+            sztp_counts = df['SzTp'].value_counts()
+            summary_text += "=== Size Type 현황 ===\n"
+            for sztp, count in sztp_counts.items():
+                if pd.notna(sztp):
+                    summary_text += f"{sztp}: {count}개\n"
+            
+            # POD별 통계
+            summary_text += "\n=== POD 현황 ===\n"
+            pod_counts = df['POD'].value_counts()
+            for pod, count in pod_counts.items():
+                if pd.notna(pod):
+                    summary_text += f"{pod}: {count}개\n"
+
+            self.multi_summary_text.delete(1.0, tk.END)
+            self.multi_summary_text.insert(tk.END, summary_text)
+
+        except Exception as e:
+            self.multi_summary_text.delete(1.0, tk.END)
+            self.multi_summary_text.insert(tk.END, f"Summary 생성 중 오류 발생: {str(e)}")
+
+    def update_single_summary(self, df):
+        """단일 CLL 탭의 Summary 업데이트"""
+        try:
+            summary_text = "=== Container Summary ===\n\n"
+            
+            # 전체 컨테이너 수
+            total_containers = len(df)
+            summary_text += f"전체 컨테이너 수: {total_containers}\n\n"
+            
+            # Size Type별 통계
+            sztp_counts = df['T&S'].value_counts()
+            summary_text += "=== Size Type 현황 ===\n"
+            for sztp, count in sztp_counts.items():
+                if pd.notna(sztp):
+                    summary_text += f"{sztp}: {count}개\n"
+            
+            # F/E 별 통계
+            summary_text += "\n=== Full/Empty 현황 ===\n"
+            fe_counts = df['F/E'].value_counts()
+            for fe, count in fe_counts.items():
+                if pd.notna(fe):
+                    summary_text += f"{fe}: {count}개\n"
+            
+            # POD별 통계
+            summary_text += "\n=== POD 현황 ===\n"
+            pod_counts = df['POD'].value_counts()
+            for pod, count in pod_counts.items():
+                if pd.notna(pod):
+                    summary_text += f"{pod}: {count}개\n"
+
+            self.single_summary_text.delete(1.0, tk.END)
+            self.single_summary_text.insert(tk.END, summary_text)
+
+        except Exception as e:
+            self.single_summary_text.delete(1.0, tk.END)
+            self.single_summary_text.insert(tk.END, f"Summary 생성 중 오류 발생: {str(e)}")
 
 if __name__ == "__main__":
     app = ContainerConverter()
