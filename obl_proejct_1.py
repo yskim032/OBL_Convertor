@@ -1085,70 +1085,6 @@ class ContainerConverter:
     def combine_cll_files(self):
         """Master와 Slave CLL 파일 병합"""
         try:
-            # 선택된 서비스 확인
-            selected_service = self.selected_service.get()
-            if not selected_service:
-                messagebox.showwarning("경고", "Service Name을 선택해주세요!")
-                return
-
-            def process_cll_file(file_path, start_row):
-                cll_df = pd.read_excel(file_path, header=4)
-                processed_data = []
-                row_count = start_row
-
-                # 선택된 서비스의 매핑 가져오기
-                service_mappings = self.stow_mapping.get(selected_service, [])
-
-                for idx, row in cll_df.iterrows():
-                    if pd.notna(row['CNTR NO']):
-                        # POD 값 가져오기
-                        pod = str(row['POD']) if pd.notna(row['POD']) else ''
-                        fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''  # FPOD는 CLL의 FDP 값 사용
-                        
-                        # 초기값 설정
-                        mapped_port = pod  # POD 초기값
-                        mapped_stow = ''   # Stow 초기값
-                        
-                        # POD가 stow_code와 일치하는지 확인
-                        for mapping in service_mappings:
-                            if pod.upper() == mapping['stow_code'].upper():
-                                mapped_port = mapping['port']      # POD를 port 값으로 설정
-                                mapped_stow = mapping['stow_code'] # Stow를 stow_code 값으로 설정
-                                break
-                            elif pod.upper() == mapping['port'].upper():
-                                mapped_port = mapping['port']
-                                mapped_stow = mapping['stow_code']
-                                break
-
-                        obl_row = {
-                            'No': row_count,
-                            'CtrNbr': row['CNTR NO'],
-                            'ShOwn': 'N',
-                            'Opr': 'MSC',
-                            'POR': row['OPT'] if pd.notna(row['OPT']) else self.selected_pol.get(),
-                            'POL': self.selected_pol.get(),
-                            'TOL': self.selected_tol.get(),
-                            'POD': mapped_port,
-                            'TOD': '',
-                            'Stow': mapped_stow,
-                            'FPOD': fpod,  # FPOD는 원래 값 유지
-                            'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
-                            'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
-                            'ForE': row['F/E'],
-                            'Lbl': '',
-                            'Rfopr': 'N',
-                            'Rftemp': row['R/F'].replace(' CEL', '') if pd.notna(row['R/F']) else '',
-                            'Door': 'C',
-                            'CustH': 'N',
-                            'Fumi': 'N',
-                            'VGM': 'Y',
-                            'UNNO': row['UNDG'],
-                            'Class': row['IMDG']
-                        }
-                        processed_data.append(obl_row)
-                        row_count += 1
-                return processed_data
-
             # Master와 Slave 파일의 POD 목록 추출
             master_df = pd.read_excel(self.master_file, header=4)
             slave_df = pd.read_excel(self.slave_file, header=4)
@@ -1171,6 +1107,121 @@ class ContainerConverter:
                 
             # 선택된 서비스 저장
             self.selected_service.set(selected_service)
+
+            def process_cll_file(file_path, start_row):
+                cll_df = pd.read_excel(file_path, header=4)
+                processed_data = []
+                row_count = start_row
+
+                # 선택된 서비스의 매핑 가져오기
+                service_mappings = self.stow_mapping.get(selected_service, [])
+
+                for idx, row in cll_df.iterrows():
+                    if pd.notna(row['CNTR NO']):
+                        # POD 값 가져오기
+                        pod = str(row['POD']) if pd.notna(row['POD']) else ''
+                        fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''
+                        
+                        # 초기값 설정
+                        mapped_port = pod
+                        mapped_stow = ''
+                        
+                        # POD가 stow_code와 일치하는지 확인
+                        for mapping in service_mappings:
+                            if pod.upper() == mapping['stow_code'].upper():
+                                mapped_port = mapping['port']
+                                mapped_stow = mapping['stow_code']
+                                break
+                            elif pod.upper() == mapping['port'].upper():
+                                mapped_port = mapping['port']
+                                mapped_stow = mapping['stow_code']
+                                break
+
+                        obl_row = {
+                            'No': row_count,
+                            'CtrNbr': row['CNTR NO'],
+                            'ShOwn': 'N',
+                            'Opr': 'MSC',
+                            'POR': row['OPT'] if pd.notna(row['OPT']) else self.selected_pol.get(),
+                            'POL': self.selected_pol.get(),
+                            'TOL': self.selected_tol.get(),
+                            'POD': mapped_port,
+                            'TOD': '',
+                            'Stow': mapped_stow,
+                            'FPOD': fpod,
+                            'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
+                            'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
+                            'ForE': row['F/E'],
+                            'Lbl': '',
+                            'Rfopr': 'N',
+                            'Rftemp': row['R/F'].replace(' CEL', '') if pd.notna(row['R/F']) else '',
+                            'OvDH': row['OH'],
+                            'OvDF': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
+                            'OvDA': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
+                            'OvDP': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
+                            'OvDS': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
+                            'OvSH': '',
+                            'OvSF': '',
+                            'OvSA': '',
+                            'OvSP': '',
+                            'OvSS': '',
+                            'BL': '',
+                            'HI': '',
+                            'AC': '',
+                            'Flip': '',
+                            'Door': 'C',
+                            'CustH': 'N',
+                            'LenBB': '',
+                            'BrthBB': '',
+                            'HgtBB': '',
+                            'WgtBB': '',
+                            'Fumi': 'N',
+                            'FuDt': '',
+                            'VenDt': '',
+                            'Venti': '',
+                            'Damag': '',
+                            'PPK': '',
+                            'Food': '',
+                            'Resi': '',
+                            'Book': '',
+                            'Cold': '',
+                            'Catm': '',
+                            'VGM': 'Y',
+                            'VGM Weighting Method': '',
+                            'HVC': '',
+                            'BN1': '',
+                            'BN2': '',
+                            'BN3': '',
+                            'BN4': '',
+                            'Harmonised system codes': '',
+                            'Description': '',
+                            'Flexitank': '',
+                            'UNNO': row['UNDG'],
+                            'Class': row['IMDG'],
+                            'PSN': '',
+                            'N.Weight': '',
+                            'S.Risk1': '',
+                            'S.Risk2': '',
+                            'S.Risk3': '',
+                            'P.Group': '',
+                            'LQ': '',
+                            'EQ': '',
+                            'FP': '',
+                            'IMDG Remark': '',
+                            'Sub Index': '',
+                            'Inf type': '',
+                            'Address': '',
+                            'Street': '',
+                            'City': '',
+                            'Postal Code': '',
+                            'Country Code': '',
+                            'Country': '',
+                            'Sub Index_1': '',  # 첫 번째 Sub Index 열
+                            'Remark': ''
+                        }
+                        processed_data.append(obl_row)
+                        row_count += 1
+                return processed_data
 
             # Master와 Slave 파일 처리
             master_data = process_cll_file(self.master_file, 1)
