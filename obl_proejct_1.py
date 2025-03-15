@@ -26,6 +26,21 @@ class ContainerConverter:
         self.onedrive_desktop = os.path.join(os.path.expanduser('~'), 'OneDrive', '바탕 화면')
         self.config_dir = os.path.join(self.desktop_path, "OBL_Configs")
         
+        # port_codes 딕셔너리 추가
+        self.port_codes = {
+            'KRPUS': 'BUSAN',
+            'KRKAN': 'KWANGYANG',
+            'KRINC': 'INCHEON',
+            'KRPTK': 'PYEONGTAEK',
+            'KRUSN': 'ULSAN',
+            'KRMAS': 'MASAN',
+            'KRKPO': 'POHANG',
+            'KRGNR': 'GUNSAN',
+            'KRYSN': 'YEOSU',
+            'KRMOK': 'MOKPO',
+            'KRJES': 'JEJU'
+        }
+        
         # 설정 파일 찾기 및 로드
         self.find_and_load_config_files()
         
@@ -1390,144 +1405,137 @@ class ContainerConverter:
     def process_itps_file(self):
         """ITPS 파일 처리 및 OBL에 추가"""
         try:
-            # 선택된 서비스 확인
-            selected_service = self.selected_service.get()
-            if not selected_service:
-                messagebox.showwarning("경고", "Service Name을 선택해주세요!")
-                return
+            print("Starting ITPS file processing...")  # 디버깅용
 
-            # ITPS 파일 읽기 (헤더는 1행, 데이터는 3행부터)
-            itps_df = pd.read_excel(self.itps_file, header=0, skiprows=[1])
-            
             # OBL 파일 읽기
+            print(f"Reading OBL file: {self.obl_file}")  # 디버깅용
             obl_df = pd.read_excel(self.obl_file)
+            print(f"OBL data rows: {len(obl_df)}")  # 디버깅용
+            
+            # ITPS 파일 읽기
+            print(f"Reading ITPS file: {self.itps_file}")  # 디버깅용
+            itps_df = pd.read_excel(self.itps_file)
+            print(f"ITPS data rows: {len(itps_df)}")  # 디버깅용
             
             # 기존 OBL의 마지막 No 값 가져오기
-            last_no = obl_df['No'].max()
+            last_no = len(obl_df)
             
             # OBL의 POL과 TOL 값 가져오기
             obl_pol = obl_df['POL'].iloc[0] if not obl_df.empty else ''
             obl_tol = obl_df['TOL'].iloc[0] if not obl_df.empty else ''
-            
-            # 선택된 서비스의 매핑 가져오기
-            service_mappings = self.stow_mapping.get(selected_service, [])
-            
-            # 기존 OBL 데이터에 대한 Stow Code 매핑 적용
-            updated_obl_rows = []
-            for _, row in obl_df.iterrows():
-                obl_row = row.copy()
-                pod = str(row['POD']) if pd.notna(row['POD']) else ''
-                fpod = str(row['FPOD']) if pd.notna(row['FPOD']) else ''
-                
-                # POD가 stow_code와 일치하는지 확인
-                mapped_port = pod
-                mapped_stow = ''
-                for mapping in service_mappings:
-                    if pod.upper() == mapping['stow_code'].upper():
-                        mapped_port = mapping['port']
-                        mapped_stow = mapping['stow_code']
-                        break
-                
-                obl_row['POD'] = mapped_port
-                obl_row['Stow'] = mapped_stow
-                obl_row['FPOD'] = fpod  # FPOD는 원래 값 유지
-                updated_obl_rows.append(obl_row)
-            
-            # ITPS 데이터를 OBL 형식으로 변환
+
+            # 새로운 행들을 저장할 리스트
             new_rows = []
+
+            # ITPS 데이터를 OBL 형식으로 변환
             for idx, row in itps_df.iterrows():
                 try:
+                    # Equipment Number가 있는 경우만 처리
                     if pd.isna(row['Equipment Number']):
                         continue
+
+                    print(f"Processing ITPS row {idx}: {row['Equipment Number']}")  # 디버깅용
                     
-                    obl_row = {col: '' for col in obl_df.columns}
-                    
-                    # PORT CODE 변환 적용
+                    # PORT CODE 변환
                     por = self.convert_to_port_code(row['Origin Load Port']) if pd.notna(row['Origin Load Port']) else ''
-                    pol = self.convert_to_port_code(obl_pol)  # OBL의 POL 사용
+                    pol = self.convert_to_port_code(obl_pol)
+                    pod = self.convert_to_port_code(row['Discharge Port']) if pd.notna(row['Discharge Port']) else ''
                     
-                    # POD 값 가져오기
-                    pod = str(row['Discharge Port']) if pd.notna(row['Discharge Port']) else ''
-                    
-                    # 초기값 설정
-                    mapped_port = pod
-                    mapped_stow = ''
-                    
-                    # POD가 stow_code와 일치하는지 확인
-                    for mapping in service_mappings:
-                        if pod.upper() == mapping['stow_code'].upper():
-                            mapped_port = mapping['port']
-                            mapped_stow = mapping['stow_code']
-                            break
-                    
-                    # TpSZ 매핑 적용
+                    # TpSZ 매핑
                     tpsz = str(row['Type/Size']) if pd.notna(row['Type/Size']) else ''
                     mapped_tpsz = self.tpsz_mapping.get(tpsz, tpsz)
                     
                     # Rftemp 처리
-                    rftemp = None
+                    rftemp = ''
                     if pd.notna(row['Reefer Temp.']):
                         temp_str = str(row['Reefer Temp.']).split('/')[0].strip()
+                        rftemp = temp_str
+
+                    # Weight 처리
+                    weight = ''
+                    if pd.notna(row['Weight']):
                         try:
-                            rftemp = float(temp_str)
-                        except ValueError:
-                            rftemp = None
+                            weight = int(float(row['Weight']))
+                        except:
+                            weight = ''
+
+                    # 새로운 행 데이터 생성
+                    new_row = pd.Series(index=obl_df.columns)  # OBL의 모든 컬럼으로 초기화
+                    new_row.fillna('', inplace=True)  # 모든 값을 빈 문자열로 초기화
+
+                    # 데이터 매핑
+                    new_row['No'] = last_no + len(new_rows) + 1
+                    new_row['CtrNbr'] = str(row['Equipment Number'])
+                    new_row['ShOwn'] = 'N'
+                    new_row['Opr'] = 'MSC'
+                    new_row['POR'] = por
+                    new_row['POL'] = pol
+                    new_row['TOL'] = obl_tol
+                    new_row['POD'] = pod
+                    new_row['FPOD'] = pod
+                    new_row['SzTp'] = mapped_tpsz
+                    new_row['Wgt'] = weight
+                    new_row['ForE'] = str(row['Full/Empty']) if pd.notna(row['Full/Empty']) else ''
+                    new_row['Rfopr'] = 'N'
+                    new_row['Rftemp'] = rftemp
+                    new_row['Door'] = 'C'
+                    new_row['CustH'] = 'N'
+                    new_row['Fumi'] = 'N'
+                    new_row['VGM'] = 'Y'
                     
-                    # 나머지 필드 처리
-                    obl_row.update({
-                        'No': last_no + len(new_rows) + 1,
-                        'CtrNbr': str(row['Equipment Number']) if pd.notna(row['Equipment Number']) else '',
-                        'ShOwn': 'N',
-                        'Opr': 'MSC',
-                        'POR': por,
-                        'POL': pol,
-                        'TOL': obl_tol,
-                        'POD': mapped_port,
-                        'FPOD': pod,  # FPOD는 원래 값 유지
-                        'Stow': mapped_stow,
-                        'SzTp': mapped_tpsz,
-                        'Wgt': int(row['Weight']) if pd.notna(row['Weight']) else '',
-                        'ForE': str(row['Full/Empty']) if pd.notna(row['Full/Empty']) else 'N',
-                        'Rfopr': 'N',
-                        'Rftemp': f"{rftemp:.1f}" if rftemp is not None else '',
-                        'Door': 'C',
-                        'CustH': 'N',
-                        'Fumi': 'N',
-                        'VGM': 'Y',
-                        'Class': str(int(row['IMO Class'])) if pd.notna(row['IMO Class']) and str(row['IMO Class']).replace('.', '').isdigit() else str(row['IMO Class']) if pd.notna(row['IMO Class']) else '',
-                        'UNNO': str(row['UN Number'])[:6] if pd.notna(row['UN Number']) else ''
-                    })
-                    new_rows.append(obl_row)
+                    # IMO Class 처리
+                    if pd.notna(row['IMO Class']):
+                        imo_class = str(row['IMO Class'])
+                        if imo_class.replace('.', '').isdigit():
+                            new_row['Class'] = str(int(float(imo_class)))
+                        else:
+                            new_row['Class'] = imo_class
+
+                    # UN Number 처리
+                    if pd.notna(row['UN Number']):
+                        new_row['UNNO'] = str(row['UN Number'])[:6]
+
+                    new_rows.append(new_row)
+                    print(f"Added new row for container: {new_row['CtrNbr']}")  # 디버깅용
+                    
                 except Exception as e:
-                    print(f"행 {idx} 데이터 확인 중 오류: {str(e)}")
+                    print(f"Error processing row {idx}: {str(e)}")  # 디버깅용
                     continue
-            
-            # 기존 OBL 데이터와 새로운 ITPS 데이터 결합
-            updated_obl_df = pd.DataFrame(updated_obl_rows)
-            new_df = pd.DataFrame(new_rows)
-            combined_df = pd.concat([updated_obl_df, new_df], ignore_index=True)
-            
-            # 모든 port 코드 변환 적용
-            combined_df['POR'] = combined_df['POR'].apply(self.convert_to_port_code)
-            combined_df['POL'] = combined_df['POL'].apply(self.convert_to_port_code)
-            combined_df['POD'] = combined_df['POD'].apply(self.convert_to_port_code)
-            combined_df['FPOD'] = combined_df['FPOD'].apply(self.convert_to_port_code)
-            
-            # 파일 저장
-            save_dir = os.path.dirname(self.obl_file)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(save_dir, f"OBL_with_ITPS_{timestamp}.xlsx")
-            combined_df.to_excel(output_file, index=False)
-            
-            # 결과 표시
-            self.itps_output_label.config(text=f"출력 파일: {os.path.basename(output_file)}")
-            
-            # Summary 업데이트
-            self.update_itps_summary(combined_df)
-            
-            messagebox.showinfo("성공", "ITPS 데이터가 성공적으로 추가되었습니다.")
+
+            print(f"Total new rows created: {len(new_rows)}")  # 디버깅용
+
+            # 새로운 데이터를 DataFrame으로 변환
+            if new_rows:
+                new_df = pd.DataFrame(new_rows)
+                print(f"New DataFrame created with {len(new_df)} rows")  # 디버깅용
+
+                # 기존 OBL 데이터와 새로운 데이터 결합
+                combined_df = pd.concat([obl_df, new_df], ignore_index=True)
+                print(f"Combined DataFrame has {len(combined_df)} rows")  # 디버깅용
+
+                # 파일 저장
+                save_dir = os.path.dirname(self.obl_file)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file = os.path.join(save_dir, f"OBL_with_ITPS_{timestamp}.xlsx")
+                
+                # 파일 저장 전 확인
+                print(f"Saving to: {output_file}")  # 디버깅용
+                combined_df.to_excel(output_file, index=False)
+                
+                # 파일 저장 확인
+                if os.path.exists(output_file):
+                    print(f"File saved successfully: {output_file}")  # 디버깅용
+                    self.itps_output_label.config(text=f"출력 파일: {os.path.basename(output_file)}")
+                    self.update_itps_summary(combined_df)
+                    messagebox.showinfo("성공", "ITPS 데이터가 성공적으로 추가되었습니다.")
+                else:
+                    raise Exception("파일이 생성되지 않았습니다.")
+
+            else:
+                raise Exception("처리할 ITPS 데이터가 없습니다.")
             
         except Exception as e:
+            print(f"Error in process_itps_file: {str(e)}")  # 디버깅용
             messagebox.showerror("오류", f"ITPS 처리 중 오류 발생: {str(e)}")
 
     def update_itps_summary(self, df):
