@@ -531,14 +531,14 @@ class ContainerConverter:
             self.selected_pol.set(port_info['pol'])
             self.selected_tol.set(port_info['tol'])
 
-            # POL 버튼 색상 업데이트
+            # 단일 탭의 POL 버튼 색상만 업데이트
             for port, btn in self.pol_buttons.items():
                 if port == port_info['pol']:
                     btn.configure(bg='yellow')
                 else:
                     btn.configure(bg='SystemButtonFace')
 
-            # TOL 버튼 색상 업데이트
+            # 단일 탭의 TOL 버튼 색상만 업데이트
             for terminal, btn in self.tol_buttons.items():
                 if terminal == port_info['tol']:
                     btn.configure(bg='yellow')
@@ -994,21 +994,55 @@ class ContainerConverter:
 
     def drop_master_cll(self, event):
         """Master CLL 파일 드롭 처리"""
-        if not self.selected_pol.get() or not self.selected_tol.get():
-            messagebox.showwarning("경고", "POL과 TOL을 먼저 선택해주세요!")
-            return
-
         file_path = event.data.strip('{}').strip('"')
         if not os.path.exists(file_path):
             messagebox.showerror("오류", "파일이 존재하지 않습니다.")
             return
 
-        self.master_file = file_path
-        self.master_path_label.config(text=f"파일 경로: {file_path}")
-        self.master_label.config(text="Master 파일이 선택되었습니다")
-        
-        # Slave 프레임 활성화
-        self.slave_frame.pack(pady=10, padx=10, fill="x")
+        try:
+            # 엑셀 파일 읽기
+            df_check = pd.read_excel(file_path, header=None)
+            # 4행 12열의 값 가져오기 (0-based index이므로 3, 11)
+            terminal_code = str(df_check.iloc[3, 11]).strip()
+
+            if not terminal_code:
+                messagebox.showerror("오류", "(4,12) 위치에서 터미널 코드를 찾을 수 없습니다.")
+                return
+
+            # 터미널 코드를 기반으로 POL, TOL 값 자동 설정
+            port_info = self.terminal_to_port_mapping(terminal_code)
+            
+            if not port_info['pol'] or not port_info['tol']:
+                messagebox.showerror("오류", f"터미널 코드 '{terminal_code}'에 대한 매핑을 찾을 수 없습니다.")
+                return
+
+            # POL, TOL 설정
+            self.selected_pol.set(port_info['pol'])
+            self.selected_tol.set(port_info['tol'])
+
+            # Multi 탭의 POL 버튼 색상만 업데이트
+            for port, btn in self.multi_pol_buttons.items():
+                if port == port_info['pol']:
+                    btn.configure(bg='yellow')
+                else:
+                    btn.configure(bg='SystemButtonFace')
+
+            # Multi 탭의 TOL 버튼 색상만 업데이트
+            for btn_text, value in self.tol_values.items():
+                if value == port_info['tol']:
+                    self.multi_tol_buttons[btn_text].configure(bg='yellow')
+                else:
+                    self.multi_tol_buttons[btn_text].configure(bg='SystemButtonFace')
+
+            self.master_file = file_path
+            self.master_path_label.config(text=f"파일 경로: {file_path}")
+            self.master_label.config(text="Master 파일이 선택되었습니다")
+            
+            # Slave 프레임 활성화
+            self.slave_frame.pack(pady=10, padx=10, fill="x")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}")
 
     def drop_slave_cll(self, event):
         """Slave CLL 파일 드롭 처리"""
@@ -1058,118 +1092,85 @@ class ContainerConverter:
                 return
 
             def process_cll_file(file_path, start_row):
-                try:
-                    cll_df = pd.read_excel(file_path, header=4)
-                    processed_data = []
-                    row_count = start_row
+                cll_df = pd.read_excel(file_path, header=4)
+                processed_data = []
+                row_count = start_row
 
-                    # 선택된 서비스의 매핑 가져오기
-                    service_mappings = self.stow_mapping.get(selected_service, [])
+                # 선택된 서비스의 매핑 가져오기
+                service_mappings = self.stow_mapping.get(selected_service, [])
 
-                    for idx, row in cll_df.iterrows():
-                        if pd.notna(row['CNTR NO']):
-                            # POD 값 가져오기
-                            pod = str(row['POD']) if pd.notna(row['POD']) else ''
-                            fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''  # FPOD는 CLL의 FDP 값 사용
-                            
-                            # 초기값 설정
-                            mapped_port = pod  # POD 초기값
-                            mapped_stow = ''   # Stow 초기값
-                            
-                            # POD가 stow_code와 일치하는지 확인
-                            for mapping in service_mappings:
-                                if pod.upper() == mapping['stow_code'].upper():
-                                    mapped_port = mapping['port']      # POD를 port 값으로 설정
-                                    mapped_stow = mapping['stow_code'] # Stow를 stow_code 값으로 설정
-                                    break
+                for idx, row in cll_df.iterrows():
+                    if pd.notna(row['CNTR NO']):
+                        # POD 값 가져오기
+                        pod = str(row['POD']) if pd.notna(row['POD']) else ''
+                        fpod = str(row['FDP']) if pd.notna(row['FDP']) else ''  # FPOD는 CLL의 FDP 값 사용
+                        
+                        # 초기값 설정
+                        mapped_port = pod  # POD 초기값
+                        mapped_stow = ''   # Stow 초기값
+                        
+                        # POD가 stow_code와 일치하는지 확인
+                        for mapping in service_mappings:
+                            if pod.upper() == mapping['stow_code'].upper():
+                                mapped_port = mapping['port']      # POD를 port 값으로 설정
+                                mapped_stow = mapping['stow_code'] # Stow를 stow_code 값으로 설정
+                                break
+                            elif pod.upper() == mapping['port'].upper():
+                                mapped_port = mapping['port']
+                                mapped_stow = mapping['stow_code']
+                                break
 
-                            obl_row = {
-                                'No': row_count,
-                                'CtrNbr': row['CNTR NO'],
-                                'ShOwn': 'N',
-                                'Opr': 'MSC',
-                                'POR': row['OPT'] if pd.notna(row['OPT']) else self.selected_pol.get(),
-                                'POL': self.selected_pol.get(),
-                                'TOL': self.selected_tol.get(),
-                                'POD': mapped_port,
-                                'TOD': '',
-                                'Stow': mapped_stow,
-                                'FPOD': fpod,  # FPOD는 원래 값 유지
-                                'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
-                                'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
-                                'ForE': row['F/E'],
-                                'Lbl': '',
-                                'Rfopr': 'N',
-                                'Rftemp': row['R/F'].replace(' CEL', '') if pd.notna(row['R/F']) else '',
-                                'OvDH': row['OH'],
-                                'OvDF': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
-                                'OvDA': row['OL'] / 2 if pd.notna(row['OL']) and row['OL'] != 0 else '',
-                                'OvDP': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
-                                'OvDS': row['OW'] / 2 if pd.notna(row['OW']) and row['OW'] != 0 else '',
-                                'OvSH': '',
-                                'OvSF': '',
-                                'OvSA': '',
-                                'OvSP': '',
-                                'OvSS': '',
-                                'BL': '',
-                                'HI': '',
-                                'AC': '',
-                                'Flip': '',
-                                'Door': 'C',
-                                'CustH': 'N',
-                                'LenBB': '',
-                                'BrthBB': '',
-                                'HgtBB': '',
-                                'WgtBB': '',
-                                'Fumi': 'N',
-                                'FuDt': '',
-                                'VenDt': '',
-                                'Venti': '',
-                                'Damag': '',
-                                'PPK': '',
-                                'Food': '',
-                                'Resi': '',
-                                'Book': '',
-                                'Cold': '',
-                                'Catm': '',
-                                'VGM': 'Y',
-                                'VGM Weighting Method': '',
-                                'HVC': '',
-                                'BN1': '',
-                                'BN2': '',
-                                'BN3': '',
-                                'BN4': '',
-                                'Harmonised system codes': '',
-                                'Description': '',
-                                'Flexitank': '',
-                                'UNNO': row['UNDG'],
-                                'Class': row['IMDG'],
-                                'PSN': '',
-                                'N.Weight': '',
-                                'S.Risk1': '',
-                                'S.Risk2': '',
-                                'S.Risk3': '',
-                                'P.Group': '',
-                                'LQ': '',
-                                'EQ': '',
-                                'FP': '',
-                                'IMDG Remark': '',
-                                'Sub Index': '',
-                                'Inf type': '',
-                                'Address': '',
-                                'Street': '',
-                                'City': '',
-                                'Postal Code': '',
-                                'Country Code': '',
-                                'Country': '',
-                                'Sub Index_1': '',  # 첫 번째 Sub Index 열
-                                'Remark': ''
-                            }
-                            processed_data.append(obl_row)
-                            row_count += 1
-                    return processed_data
-                except Exception as e:
-                    raise Exception(f"파일 처리 중 오류 발생: {file_path}")
+                        obl_row = {
+                            'No': row_count,
+                            'CtrNbr': row['CNTR NO'],
+                            'ShOwn': 'N',
+                            'Opr': 'MSC',
+                            'POR': row['OPT'] if pd.notna(row['OPT']) else self.selected_pol.get(),
+                            'POL': self.selected_pol.get(),
+                            'TOL': self.selected_tol.get(),
+                            'POD': mapped_port,
+                            'TOD': '',
+                            'Stow': mapped_stow,
+                            'FPOD': fpod,  # FPOD는 원래 값 유지
+                            'SzTp': int(row['T&S']) if pd.notna(row['T&S']) else '',
+                            'Wgt': int(row['WGT']) if pd.notna(row['WGT']) else '',
+                            'ForE': row['F/E'],
+                            'Lbl': '',
+                            'Rfopr': 'N',
+                            'Rftemp': row['R/F'].replace(' CEL', '') if pd.notna(row['R/F']) else '',
+                            'Door': 'C',
+                            'CustH': 'N',
+                            'Fumi': 'N',
+                            'VGM': 'Y',
+                            'UNNO': row['UNDG'],
+                            'Class': row['IMDG']
+                        }
+                        processed_data.append(obl_row)
+                        row_count += 1
+                return processed_data
+
+            # Master와 Slave 파일의 POD 목록 추출
+            master_df = pd.read_excel(self.master_file, header=4)
+            slave_df = pd.read_excel(self.slave_file, header=4)
+            
+            # 두 파일의 POD 목록 합치기
+            pod_list = list(set(master_df['POD'].unique().tolist() + slave_df['POD'].unique().tolist()))
+            
+            # 매칭되는 서비스 찾기
+            matching_services = self.find_matching_services(pod_list)
+            
+            if not matching_services:
+                messagebox.showwarning("경고", "일치하는 서비스를 찾을 수 없습니다.")
+                return
+            
+            # 서비스 선택 다이얼로그 표시
+            selected_service = self.show_service_selection_dialog(matching_services)
+            
+            if not selected_service:
+                return
+                
+            # 선택된 서비스 저장
+            self.selected_service.set(selected_service)
 
             # Master와 Slave 파일 처리
             master_data = process_cll_file(self.master_file, 1)
