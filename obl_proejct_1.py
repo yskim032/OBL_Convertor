@@ -15,38 +15,16 @@ class ContainerConverter:
     def __init__(self):
         self.root = TkinterDnD.Tk()
         self.root.title("CLL to OBL Converter")
-        self.root.geometry("1000x900")  # 창 크기 증가
+        self.root.geometry("1000x900")
 
         # 설정 파일 경로 설정
-        user_home = os.environ['USERPROFILE']  # Windows 사용자 프로필 경로
-        self.config_dir = os.path.normpath(os.path.join(user_home, "Desktop", "OBL_Configs"))
-        os.makedirs(self.config_dir, exist_ok=True)
+        self.desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
+        self.onedrive_desktop = os.path.join(os.path.expanduser('~'), 'OneDrive', '바탕 화면')
+        self.config_dir = os.path.join(self.desktop_path, "OBL_Configs")
         
-        self.stowage_config_file = os.path.normpath(os.path.join(self.config_dir, "StowCodes_mapping.json"))  # 파일명 수정
-        self.port_config_file = os.path.normpath(os.path.join(self.config_dir, "port_mapping.json"))
-        self.tpsz_config_file = os.path.normpath(os.path.join(self.config_dir, "SZTP_mapping.json"))  # TPSZ 파일명도 수정
+        # 설정 파일 찾기 및 로드
+        self.find_and_load_config_files()
         
-        # 매핑 설정 로드
-        self.stowage_settings = self.load_stowage_settings()
-        self.stow_mapping = self.stowage_settings.get('mapping', {})
-        self.stow_column_mapping = self.stowage_settings.get('column_mapping', {
-            'discharge_port': 'FPOD',
-            'stowage_code': 'Stow'
-        })
-        
-        # TpSz 매핑 설정 로드
-        self.tpsz_settings = self.load_tpsz_settings()
-        self.tpsz_mapping = self.tpsz_settings.get('mapping', {})
-        self.tpsz_column_mapping = self.tpsz_settings.get('column_mapping', {
-            'before': 'Description',
-            'after': 'Code'
-        })
-        
-        # PORT CODE 매핑 추가
-        self.port_codes = {'AEAJM': 'AJMAN'}
-        self.current_file = None
-        self.output_file = None
-
         # POL, TOL 선택 값 저장 변수
         self.selected_pol = tk.StringVar()
         self.selected_tol = tk.StringVar()
@@ -56,46 +34,90 @@ class ContainerConverter:
         self.obl_file = None
 
         self.setup_ui()
-        self.reset_all()  # 프로그램 시작 시 자동으로 초기화 실행
+        self.reset_all()
+
+    def find_and_load_config_files(self):
+        """설정 파일 찾기 및 로드"""
+        # 설정 파일 이름
+        stow_filename = "StowCodes_mapping.json"
+        tpsz_filename = "SZTP_mapping.json"
+        
+        # 파일 찾기
+        self.stowage_config_file = self.find_config_file(stow_filename)
+        self.tpsz_config_file = self.find_config_file(tpsz_filename)
+        
+        print(f"Stowage config file path: {self.stowage_config_file}")  # 디버깅용
+        
+        # 설정 로드
+        self.stowage_settings = self.load_stowage_settings()
+        print(f"Loaded stowage settings: {self.stowage_settings}")  # 디버깅용
+        
+        # stow_mapping을 직접 설정값으로 설정 (중간 딕셔너리 없이)
+        self.stow_mapping = self.stowage_settings
+        print(f"Stow mapping: {self.stow_mapping}")  # 디버깅용
+        
+        # TPSZ 설정 로드
+        self.tpsz_settings = self.load_tpsz_settings()
+        self.tpsz_mapping = self.tpsz_settings.get('mapping', {})
+        self.tpsz_column_mapping = self.tpsz_settings.get('column_mapping', {
+            'before': 'Description',
+            'after': 'Code'
+        })
+
+        # 서비스 목록 업데이트를 위해 변수 준비
+        self.selected_service = tk.StringVar()
+
+    def find_config_file(self, filename: str) -> str:
+        """설정 파일 찾기"""
+        # 가능한 경로들
+        possible_paths = [
+            os.path.join(self.desktop_path, filename),  # 일반 바탕화면
+            os.path.join(self.onedrive_desktop, filename),  # OneDrive 바탕화면
+            os.path.join(self.config_dir, filename)  # 설정 디렉토리
+        ]
+        
+        # 존재하는 파일 찾기
+        for path in possible_paths:
+            if os.path.exists(path):
+                print(f"Found config file: {path}")  # 디버깅용
+                return path
+        
+        # 파일이 없으면 설정 디렉토리에 생성
+        os.makedirs(self.config_dir, exist_ok=True)
+        default_path = os.path.join(self.config_dir, filename)
+        with open(default_path, 'w', encoding='utf-8') as f:
+            json.dump({}, f, ensure_ascii=False, indent=2)
+        print(f"Created new config file: {default_path}")  # 디버깅용
+        
+        # 사용자에게 알림
+        messagebox.showinfo(
+            "설정 파일 생성",
+            f"설정 파일을 찾을 수 없어 새로 생성했습니다:\n{default_path}\n"
+            f"바탕화면에 {filename} 파일이 있다면 {self.config_dir} 폴더로 복사해주세요."
+        )
+        
+        return default_path
 
     def load_stowage_settings(self) -> Dict:
+        """Stowage 설정 로드"""
         try:
-            # 하드코딩된 바탕화면 경로 사용
-            config_file = os.path.normpath(r"C:\\Users\\kod03\\OneDrive\\바탕 화면\\StowCodes_mapping.json")
-            with open(config_file, 'r') as f:
-                return json.load(f)
+            with open(self.stowage_config_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                print("Loaded Stowage settings:", data)  # 디버깅용
+                return data
         except Exception as e:
+            print(f"Error loading Stowage settings: {str(e)}")  # 디버깅용
             messagebox.showerror("Error", f"Stowage 매핑 파일 로드 실패: {str(e)}")
             return {}
 
     def load_tpsz_settings(self) -> Dict:
+        """TpSz 설정 로드"""
         try:
-            # 하드코딩된 바탕화면 경로 사용  
-            config_file = os.path.normpath(r"C:\\Users\\kod03\\OneDrive\\바탕 화면\\SZTP_mapping.json")
-            with open(config_file, 'r') as f:
+            with open(self.tpsz_config_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
             messagebox.showerror("Error", f"TpSz 매핑 파일 로드 실패: {str(e)}")
             return {}
-    #===================================================================================================
-    # def load_stowage_settings(self) -> Dict:
-    #     try:
-    #         with open(self.stowage_config_file, 'r') as f:
-    #             return json.load(f)
-    #     except Exception as e:
-   
-    #         messagebox.showerror("Error", f"Stowage 매핑 파일 로드 실패: {str(e)}")
-    #         return {}
-
-    # def load_tpsz_settings(self) -> Dict:
-    #     try:
-    #         with open(self.tpsz_config_file, 'r') as f:
-    #             return json.load(f)
-    #     except Exception as e:
-    #         messagebox.showerror("Error", f"TpSz 매핑 파일 로드 실패: {str(e)}")
-    #         return {}
-    #===================================================================================================
-
 
     def setup_ui(self):
         # 탭 컨트롤 생성
@@ -135,6 +157,10 @@ class ContainerConverter:
         self.setup_itps_tab()  # ITPS 탭 설정
         self.setup_stowage_tab()  # STOWAGE CODE 탭 설정
         self.setup_tpsz_tab()  # TpSZ 탭 설정
+        
+        # JSON 파일 내용 표시
+        self.update_stowage_preview()  # Stowage 탭 업데이트
+        self.update_tpsz_preview()     # TpSZ 탭 업데이트
 
     def setup_single_tab(self):
         # 단일 CLL 변환 탭 설정
@@ -405,16 +431,6 @@ class ContainerConverter:
         main_frame = ttk.Frame(self.stowage_tab)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # 서비스 선택 프레임
-        service_frame = ttk.LabelFrame(main_frame, text="Service Name 선택")
-        service_frame.pack(fill="x", pady=(0, 10))
-        
-        # 서비스 선택 콤보박스
-        self.selected_service = tk.StringVar()
-        self.service_combo = ttk.Combobox(service_frame, textvariable=self.selected_service)
-        self.service_combo.pack(pady=10, padx=5, fill="x")
-        self.service_combo.bind('<<ComboboxSelected>>', self.on_service_selected)
-
         # 드래그 & 드롭 영역
         drop_frame = ttk.LabelFrame(main_frame, text="Stowage Code 엑셀 파일")
         drop_frame.pack(fill="x", pady=(0, 10))
@@ -426,39 +442,35 @@ class ContainerConverter:
         self.stowage_drop_label.drop_target_register(DND_FILES)
         self.stowage_drop_label.dnd_bind('<<Drop>>', self.drop_stowage_file)
 
-        # 컬럼 매핑 설정 영역
-        mapping_frame = ttk.LabelFrame(main_frame, text="컬럼 매핑 설정")
-        mapping_frame.pack(fill="x", pady=(0, 10))
-
-        # Discharge Port 컬럼 매핑
-        discharge_frame = ttk.Frame(mapping_frame)
-        discharge_frame.pack(fill="x", pady=5)
-        ttk.Label(discharge_frame, text="Discharge Port 컬럼명:").pack(side="left", padx=5)
-        self.discharge_entry = ttk.Entry(discharge_frame)
-        self.discharge_entry.pack(side="left", fill="x", expand=True, padx=5)
-        self.discharge_entry.insert(0, self.stow_column_mapping.get('discharge_port', ''))
-
-        # Stowage Code 컬럼 매핑
-        stowage_frame = ttk.Frame(mapping_frame)
-        stowage_frame.pack(fill="x", pady=5)
-        ttk.Label(stowage_frame, text="Stowage Code 컬럼명:").pack(side="left", padx=5)
-        self.stowage_entry = ttk.Entry(stowage_frame)
-        self.stowage_entry.pack(side="left", fill="x", expand=True, padx=5)
-        self.stowage_entry.insert(0, self.stow_column_mapping.get('stowage_code', ''))
-
-        # 저장 버튼
-        save_button = ttk.Button(mapping_frame, text="설정 저장", command=self.save_stowage_settings)
-        save_button.pack(pady=10)
-
         # 현재 매핑 미리보기
         preview_frame = ttk.LabelFrame(main_frame, text="현재 매핑 미리보기")
         preview_frame.pack(fill="both", expand=True)
         
-        self.preview_text = tk.Text(preview_frame, height=10)
+        # 미리보기 텍스트 위젯 생성
+        self.preview_text = tk.Text(preview_frame, height=20, width=50)
         self.preview_text.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # 현재 매핑 표시
-        self.update_stowage_preview()
+
+        # 저장 버튼
+        save_button = ttk.Button(main_frame, text="설정 저장", command=self.save_stowage_settings)
+        save_button.pack(pady=10)
+
+        # 초기 미리보기 내용 설정
+        print("Setting up Stowage preview with mapping:", self.stow_mapping)  # 디버깅용
+        preview_text = "=== 현재 매핑 ===\n"
+        if self.stow_mapping:
+            for service_name, mappings in self.stow_mapping.items():
+                preview_text += f"\nService Name: {service_name}\n"
+                preview_text += "------------------------\n"
+                for mapping in mappings:
+                    preview_text += f"Port: {mapping['port']}\n"
+                    preview_text += f"Stow Code: {mapping['stow_code']}\n"
+                    preview_text += "------------------------\n"
+        else:
+            preview_text += "매핑 정보가 없습니다."
+
+        # 미리보기 텍스트 설정
+        self.preview_text.delete(1.0, tk.END)
+        self.preview_text.insert(tk.END, preview_text)
 
     def on_service_selected(self, event):
         """서비스 선택 시 처리"""
@@ -1652,39 +1664,28 @@ class ContainerConverter:
     def update_stowage_preview(self):
         """Stowage Code 매핑 미리보기 업데이트"""
         try:
-            self.preview_text.delete(1.0, tk.END)
-            
-            # 서비스 목록 업데이트
-            service_names = list(self.stow_mapping.keys())
-            self.service_combo['values'] = service_names
-            
-            preview_text = "=== 현재 매핑 ===\n"
-            selected_service = self.selected_service.get()
-            
-            if selected_service:
-                preview_text += f"Service Name: {selected_service}\n"
-                preview_text += "------------------------\n"
+            if hasattr(self, 'preview_text'):
+                self.preview_text.delete(1.0, tk.END)
                 
-                # 선택된 서비스에 대한 매핑만 표시
-                if selected_service in self.stow_mapping:
-                    for mapping in self.stow_mapping[selected_service]:
-                        preview_text += f"Port: {mapping['port']}\n"
-                        preview_text += f"Stow Code: {mapping['stow_code']}\n"
+                preview_text = "=== 현재 매핑 ===\n"
+                
+                if not self.stow_mapping:
+                    preview_text += "매핑 정보가 없습니다."
+                else:
+                    for service_name, mappings in self.stow_mapping.items():
+                        preview_text += f"\nService Name: {service_name}\n"
                         preview_text += "------------------------\n"
-            else:
-                # 서비스가 선택되지 않은 경우 모든 매핑 표시
-                for service_name, mappings in self.stow_mapping.items():
-                    preview_text += f"Service Name: {service_name}\n"
-                    for mapping in mappings:
-                        preview_text += f"Port: {mapping['port']}\n"
-                        preview_text += f"Stow Code: {mapping['stow_code']}\n"
-                    preview_text += "------------------------\n"
+                        for mapping in mappings:
+                            preview_text += f"Port: {mapping['port']}\n"
+                            preview_text += f"Stow Code: {mapping['stow_code']}\n"
+                            preview_text += "------------------------\n"
                 
-            self.preview_text.insert(tk.END, preview_text)
-            
+                self.preview_text.insert(tk.END, preview_text)
+                
         except Exception as e:
-            self.preview_text.delete(1.0, tk.END)
-            self.preview_text.insert(tk.END, f"미리보기 업데이트 중 오류 발생: {str(e)}")
+            if hasattr(self, 'preview_text'):
+                self.preview_text.delete(1.0, tk.END)
+                self.preview_text.insert(tk.END, f"미리보기 업데이트 중 오류 발생: {str(e)}")
 
     def drop_tpsz_file(self, event):
         """TpSZ 엑셀 파일 드롭 처리"""
@@ -1754,21 +1755,23 @@ class ContainerConverter:
     def update_tpsz_preview(self):
         """TpSZ 매핑 미리보기 업데이트"""
         try:
-            self.tpsz_preview_text.delete(1.0, tk.END)
-            
-            preview_text = "=== 컬럼 매핑 설정 ===\n"
-            preview_text += f"Before 컬럼: {self.tpsz_column_mapping.get('before', '')}\n"
-            preview_text += f"After 컬럼: {self.tpsz_column_mapping.get('after', '')}\n\n"
-            
-            preview_text += "=== 현재 매핑 ===\n"
-            for before, after in self.tpsz_mapping.items():
-                preview_text += f"{before}: {after}\n"
+            if hasattr(self, 'tpsz_preview_text'):
+                self.tpsz_preview_text.delete(1.0, tk.END)
                 
-            self.tpsz_preview_text.insert(tk.END, preview_text)
-            
+                preview_text = "=== 컬럼 매핑 설정 ===\n"
+                preview_text += f"Before 컬럼: {self.tpsz_column_mapping.get('before', '')}\n"
+                preview_text += f"After 컬럼: {self.tpsz_column_mapping.get('after', '')}\n\n"
+                
+                preview_text += "=== 현재 매핑 ===\n"
+                for before, after in self.tpsz_mapping.items():
+                    preview_text += f"{before}: {after}\n"
+                
+                self.tpsz_preview_text.insert(tk.END, preview_text)
+                
         except Exception as e:
-            self.tpsz_preview_text.delete(1.0, tk.END)
-            self.tpsz_preview_text.insert(tk.END, f"미리보기 업데이트 중 오류 발생: {str(e)}")
+            if hasattr(self, 'tpsz_preview_text'):
+                self.tpsz_preview_text.delete(1.0, tk.END)
+                self.tpsz_preview_text.insert(tk.END, f"미리보기 업데이트 중 오류 발생: {str(e)}")
 
     def setup_tpsz_tab(self):
         """TpSZ 관리 탭 설정"""
@@ -1818,7 +1821,16 @@ class ContainerConverter:
         self.tpsz_preview_text = tk.Text(preview_frame, height=10)
         self.tpsz_preview_text.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # 현재 매핑 표시
+        # 컬럼 매핑 엔트리 값 설정
+        if hasattr(self, 'before_entry'):
+            self.before_entry.delete(0, tk.END)
+            self.before_entry.insert(0, self.tpsz_column_mapping.get('before', ''))
+        
+        if hasattr(self, 'after_entry'):
+            self.after_entry.delete(0, tk.END)
+            self.after_entry.insert(0, self.tpsz_column_mapping.get('after', ''))
+        
+        # 미리보기 업데이트
         self.update_tpsz_preview()
 
     def terminal_to_port_mapping(self, terminal_code):
