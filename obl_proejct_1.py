@@ -9,7 +9,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 import xlrd  # .xls 파일 처리를 위한 라이브러리
 
-# pyinstaller -w -F --add-binary="C:/Users/kod03/AppData/Local/Programs/Python/Python311/tcl/tkdnd2.8;tkdnd2.8" obl_project1.py
+# pyinstaller -w -F --add-binary="C:/Users/kod03/AppData/Local/Programs/Python/Python311/tcl/tkdnd2.8;tkdnd2.8" obl_proejct_1.py
 
 class ContainerConverter:
     def __init__(self):
