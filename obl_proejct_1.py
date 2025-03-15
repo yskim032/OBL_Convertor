@@ -129,21 +129,6 @@ class ContainerConverter:
         self.tpsz_tab = ttk.Frame(self.tab_control)
         self.tab_control.add(self.tpsz_tab, text='TpSZ 관리')
 
-        # OBL Stow Code 적용 탭 추가
-        self.obl_tab = ttk.Frame(self.tab_control)
-        self.tab_control.add(self.obl_tab, text='OBL Stow Code 적용')
-        
-        # 드래그 & 드롭 영역
-        drop_frame = ttk.LabelFrame(self.obl_tab, text="OBL 파일")
-        drop_frame.pack(pady=10, padx=10, fill="x")
-        
-        self.obl_drop_label = ttk.Label(drop_frame, text="OBL 파일을 여기에 드롭하세요")
-        self.obl_drop_label.pack(pady=20)
-        
-        # 드래그 앤 드롭 바인딩
-        self.obl_drop_label.drop_target_register(DND_FILES)
-        self.obl_drop_label.dnd_bind('<<Drop>>', self.drop_obl_for_stow)
-
         # 각 탭 설정
         self.setup_single_tab()  # 단일 CLL 탭 설정
         self.setup_multi_cll_tab()  # Multi CLL 탭 설정
@@ -1891,50 +1876,84 @@ class ContainerConverter:
         dialog.geometry("600x400")
         
         # 설명 레이블
-        ttk.Label(dialog, text="발견된 POD와 일치하는 서비스 목록입니다.\n적용할 서비스를 선택해주세요.").pack(pady=10)
+        ttk.Label(dialog, text="발견된 POD와 일치하는 서비스 목록입니다.\n서비스를 클릭하여 선택해주세요.").pack(pady=10)
         
-        # 서비스 정보 표시 영역
-        info_frame = ttk.Frame(dialog)
-        info_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        # 스크롤 가능한 프레임 생성
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
-        # 텍스트 위젯으로 매칭 정보 표시
-        info_text = tk.Text(info_frame, height=10, width=50)
-        info_text.pack(fill="both", expand=True)
+        # 캔버스 생성
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
         
-        # 서비스별 매칭 정보 표시
-        for service_name, matches in matching_services.items():
-            info_text.insert(tk.END, f"\n=== {service_name} ===\n")
-            for match in matches:
-                info_text.insert(tk.END, f"POD: {match['pod']} -> Stow Code: {match['stow_code']}\n")
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         
-        info_text.config(state='disabled')  # 읽기 전용으로 설정
-        
-        # 서비스 선택 콤보박스
-        selected_service = tk.StringVar()
-        combo = ttk.Combobox(dialog, textvariable=selected_service, values=list(matching_services.keys()))
-        combo.pack(pady=10)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
         
         # 결과 저장용 변수
         dialog.result = None
         
-        # 확인/취소 버튼
-        def on_ok():
-            dialog.result = selected_service.get()
+        def on_service_click(service_name):
+            dialog.result = service_name
             dialog.destroy()
         
-        def on_cancel():
-            dialog.destroy()
+        # 각 서비스에 대한 프레임 생성
+        for service_name, matches in matching_services.items():
+            # 서비스 프레임
+            service_frame = ttk.Frame(scrollable_frame)
+            service_frame.pack(fill="x", pady=5, padx=5)
+            
+            # 서비스 버튼 (클릭 시 바로 선택)
+            btn = tk.Button(
+                service_frame, 
+                text=service_name,
+                command=lambda sn=service_name: on_service_click(sn),
+                relief="raised",
+                bg="#e1e1e1",
+                padx=10,
+                pady=5,
+                cursor="hand2"  # 마우스 오버 시 손가락 커서
+            )
+            btn.pack(fill="x")
+            
+            # 매칭 정보 표시
+            info_text = tk.Text(service_frame, height=len(matches), wrap="word")
+            info_text.pack(fill="x", padx=20)
+            
+            for match in matches:
+                info_text.insert(tk.END, f"POD: {match['pod']} → Stow Code: {match['stow_code']}\n")
+            
+            info_text.config(state='disabled')  # 읽기 전용으로 설정
+            
+            # 구분선 추가
+            ttk.Separator(scrollable_frame, orient='horizontal').pack(fill='x', pady=5)
         
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="확인", command=on_ok).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="취소", command=on_cancel).pack(side="left", padx=5)
+        # 스크롤바와 캔버스 패킹
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        
+        # 취소 버튼
+        ttk.Button(dialog, text="취소", command=dialog.destroy).pack(pady=10)
         
         # 모달 대화상자로 실행
         dialog.transient(self.root)
         dialog.grab_set()
-        self.root.wait_window(dialog)
+        dialog.focus_set()
         
+        # 창을 화면 중앙에 위치
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f'{width}x{height}+{x}+{y}')
+        
+        self.root.wait_window(dialog)
         return dialog.result
 
     def apply_stow_codes(self, df, service_name):
