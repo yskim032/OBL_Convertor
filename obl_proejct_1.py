@@ -8,6 +8,10 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 from datetime import datetime
 from openpyxl import load_workbook
 import xlrd  # .xls 파일 처리를 위한 라이브러리
+import time
+import openpyxl
+from openpyxl.styles import Font, Alignment
+from openpyxl import utils
 
 # pyinstaller -w -F --add-binary="C:/Users/kod03/AppData/Local/Programs/Python/Python311/tcl/tkdnd2.8;tkdnd2.8" obl_proejct_1.py
 
@@ -120,43 +124,34 @@ class ContainerConverter:
             return {}
 
     def setup_ui(self):
+        """UI 설정"""
         # 탭 컨트롤 생성
         self.tab_control = ttk.Notebook(self.root)
         self.tab_control.pack(expand=True, fill="both")
         
-        # 초기화 버튼 추가 (오른쪽 상단)
-        reset_frame = ttk.Frame(self.root)
-        reset_frame.pack(anchor='ne', padx=10, pady=5)
-        
-        reset_button = ttk.Button(reset_frame, text="초기화", command=self.reset_all)
-        reset_button.pack()
-        
-        # 기존 단일 CLL 변환 탭
+        # 각 탭 프레임 생성
         self.single_tab = ttk.Frame(self.tab_control)
-        self.tab_control.add(self.single_tab, text='단일 CLL 변환')
-        
-        # Multi CLL 변환 탭
         self.multi_cll_tab = ttk.Frame(self.tab_control)
-        self.tab_control.add(self.multi_cll_tab, text='Multi CLL 변환')
-        
-        # ITPS 추가 탭
         self.itps_tab = ttk.Frame(self.tab_control)
-        self.tab_control.add(self.itps_tab, text='ITPS 추가')
-
-        # STOWAGE CODE 관리 탭
         self.stowage_tab = ttk.Frame(self.tab_control)
-        self.tab_control.add(self.stowage_tab, text='STOWAGE CODE 관리')
-
-        # TpSZ 관리 탭
         self.tpsz_tab = ttk.Frame(self.tab_control)
+        self.edi_tab = ttk.Frame(self.tab_control)  # EDI PARSER 탭 추가
+        
+        # 탭 추가
+        self.tab_control.add(self.single_tab, text='단일 CLL 변환')
+        self.tab_control.add(self.multi_cll_tab, text='Multi CLL 변환')
+        self.tab_control.add(self.itps_tab, text='ITPS 추가')
+        self.tab_control.add(self.stowage_tab, text='STOWAGE CODE 관리')
         self.tab_control.add(self.tpsz_tab, text='TpSZ 관리')
-
+        self.tab_control.add(self.edi_tab, text='EDI PARSER')  # EDI PARSER 탭 추가
+        
         # 각 탭 설정
-        self.setup_single_tab()  # 단일 CLL 탭 설정
-        self.setup_multi_cll_tab()  # Multi CLL 탭 설정
-        self.setup_itps_tab()  # ITPS 탭 설정
-        self.setup_stowage_tab()  # STOWAGE CODE 탭 설정
-        self.setup_tpsz_tab()  # TpSZ 탭 설정
+        self.setup_single_tab()
+        self.setup_multi_cll_tab()
+        self.setup_itps_tab()
+        self.setup_stowage_tab()
+        self.setup_tpsz_tab()
+        self.setup_edi_tab()  # EDI PARSER 탭 설정 메서드 호출
         
         # JSON 파일 내용 표시
         self.update_stowage_preview()  # Stowage 탭 업데이트
@@ -2034,6 +2029,280 @@ class ContainerConverter:
             return
         
         self.process_obl_file(file_path)
+
+    def setup_edi_tab(self):
+        """EDI PARSER 탭 설정"""
+        # 좌우 분할을 위한 프레임
+        left_frame = ttk.Frame(self.edi_tab)
+        right_frame = ttk.Frame(self.edi_tab)
+        left_frame.pack(side="left", fill="both", expand=True, padx=5)
+        right_frame.pack(side="right", fill="both", expand=True, padx=5)
+
+        # 왼쪽: EDI 파일 드래그 앤 드롭 영역
+        drop_frame = ttk.LabelFrame(left_frame, text="EDI 파일 드래그 앤 드롭")
+        drop_frame.pack(fill="both", expand=True, pady=5)
+
+        self.edi_drop_label = ttk.Label(
+            drop_frame,
+            text="EDI 파일을 여기에 드롭하세요",
+            font=('Arial', 12)
+        )
+        self.edi_drop_label.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # 드래그 앤 드롭 바인딩
+        self.edi_drop_label.drop_target_register(DND_FILES)
+        self.edi_drop_label.dnd_bind('<<Drop>>', self.process_edi_file)
+
+        # 오른쪽: POD Summary 표시 영역
+        summary_frame = ttk.LabelFrame(right_frame, text="POD 별 컨테이너 수량")
+        summary_frame.pack(fill="both", expand=True, pady=5)
+
+        self.pod_summary_text = tk.Text(
+            summary_frame,
+            height=20,
+            width=40,
+            font=('Courier', 10)
+        )
+        self.pod_summary_text.pack(fill="both", expand=True, padx=5, pady=5)
+
+    def process_edi_file(self, event):
+        try:
+            input_file_path = event.data.strip('{}')
+            if not os.path.exists(input_file_path):
+                messagebox.showerror("오류", "파일이 존재하지 않습니다.")
+                return
+
+            input_dir = os.path.dirname(input_file_path)
+            
+            # 엑셀 워크북 생성
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Sheet1"  # 시트 이름을 명확하게 지정
+
+            # 기본 폰트 및 정렬 설정
+            default_font = Font(name='Arial', size=10)
+            default_alignment = Alignment(horizontal='left', vertical='center')
+            
+            # 기본 열 너비 설정
+            for column in range(1, 26):  # A to Y
+                ws.column_dimensions[utils.get_column_letter(column)].width = 12
+
+            # 헤더 설정 (6번째 행)
+            headers = ["POD", "CELL", "Cntr No.", "OPR", "POL", "STOW", "FPOD", "POR", 
+                      "TpSz", "WGT", "F_E", "SP", "Temp", "DG", "UNNO", "PG", "FP",
+                      "PrePos", "ACC.", "RSN", "Over Dimension", "Over Slot", "Remark",
+                      "Void.Calc", "Void.Calc"]
+            
+            for col, header in enumerate(headers, 1):
+                ws.cell(row=6, column=col, value=header)
+
+            # 변수 초기화
+            cntr_count = 6
+            vessel = ""
+            voy = ""
+            port = ""
+            formatted_date_time = ""
+
+            # EDI 파일 읽기
+            with open(input_file_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+            
+            # 라인별로 분리
+            file_lines = file_content.replace('\r\n', '\n').split('\n')
+
+            # EDI 라인 처리
+            for line in file_lines:
+                line = line.strip()
+                if not line:
+                    continue
+
+                edi_lines = line.split('+')
+                edi_lines2 = line.split('::')
+                edi_lines3 = line.split(':')
+
+                # DTM (날짜/시간) 처리
+                if edi_lines[0] == "DTM":
+                    date_time_parts = edi_lines[1].split(':')
+                    if date_time_parts[0] == "137":
+                        date_str = date_time_parts[1]
+                        edi_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[:4]}"
+                        edi_time = f"{date_str[8:10]}:{date_str[10:12]}:23"
+                        formatted_date_time = f"{edi_date} {edi_time}"
+                        ws.cell(row=cntr_count-4, column=1, value=f"Vessel Name : {vessel}                                                                                                   Data : {formatted_date_time}")
+
+                # TDT (선박 정보) 처리
+                elif edi_lines[0] == "TDT":
+                    vessel = edi_lines2[1][:-1]
+                    voy = edi_lines[2]
+                    
+                    ws.cell(row=cntr_count-5, column=1, value="                                                               Inquary Summary(Detail Information)")
+                    ws.cell(row=cntr_count-4, column=1, value=f"Vessel Name : {vessel}                                                                                                   Data : {formatted_date_time}")
+                    ws.cell(row=cntr_count-2, column=1, value="Operator Code : MSC")
+
+                # LOC (위치 정보) 처리
+                elif edi_lines[0] == "LOC":
+                    # LOC+5 처리
+                    if edi_lines[1] == "5":
+                        port = edi_lines[2][:5]
+                        ws.cell(row=cntr_count-3, column=1, value=f"Voyage No : {voy}                                                                                                   Port : {port}")
+
+                    # 다른 LOC 타입 처리
+                    loc_type = edi_lines[1]
+                    cell_value = "UNSET"
+
+                    if len(edi_lines) >= 3 and edi_lines[2].strip():
+                        cell_value = int(edi_lines[2][:7]) if loc_type == "147" else edi_lines[2][:5]
+                        if cell_value == "KRBUS":
+                            cell_value = "KRPUS"
+
+                        # LOC 타입별 처리
+                        # 147: 컨테이너 번호 (2열)
+                        if loc_type == "147":
+                            cntr_count += 1  # 새로운 컨테이너 행 추가
+                            ws.cell(row=cntr_count, column=2, value=cell_value)
+                        # 9,6: 목적지 (5열) 
+                        elif loc_type in ["9", "6"]:
+                            ws.cell(row=cntr_count, column=5, value=cell_value)
+                        # 11,12: 출발지 (1열)
+                        elif loc_type in ["11", "12"]:
+                            ws.cell(row=cntr_count, column=1, value=cell_value)
+                        # 76: 최종 목적지 (8열)
+                        elif loc_type == "76":
+                            ws.cell(row=cntr_count, column=8, value=cell_value)
+                        # 83: 환적항 (7열)
+                        elif loc_type == "83":
+                            ws.cell(row=cntr_count, column=7, value=cell_value)
+
+                    # UNSET 값 설정
+                    if not ws.cell(row=cntr_count, column=8).value:
+                        ws.cell(row=cntr_count, column=8, value="UNSET")
+                    if not ws.cell(row=cntr_count, column=7).value:
+                        ws.cell(row=cntr_count, column=7, value="UNSET")
+
+                # MEA (무게 정보) 처리
+                elif edi_lines[0] == "MEA" and len(edi_lines) > 3:
+                    try:
+                        # MEA+WT++KGM:29600' 형식에서 무게 추출
+                        weight_str = edi_lines[3].split(':')[1].rstrip("'")  # 29600 추출
+                        weight = round(float(weight_str) / 1000, 1)  # 29600 → 29.6
+                        ws.cell(row=cntr_count, column=10, value=weight)
+                        ws.cell(row=cntr_count, column=10).number_format = "0.0"
+                        print(f"Weight processed: {weight}")  # 디버깅용
+                    except Exception as e:
+                        print(f"Error processing weight: {str(e)}")  # 디버깅용
+                        ws.cell(row=cntr_count, column=10, value="")
+
+                # EQD (컨테이너 정보) 처리
+                elif edi_lines[0] == "EQD":
+                    try:
+                        # 컨테이너 번호 저장 (3열)
+                        ws.cell(row=cntr_count, column=3, value=edi_lines[2])
+                        
+                        # 컨테이너 타입 처리 (9열)
+                        if len(edi_lines) > 3:
+                            container_type = edi_lines[3]
+                            type_mapping = {
+                                "2200": "20DV", "2210": "20DV", "22G0": "20DV", "22G1": "20DV",
+                                "22T0": "20TK",
+                                "42G0": "40DV", "4310": "40DV",
+                                "45G0": "40HC", "4510": "40HC", "45G1": "40HC",
+                                "45R0": "40HR",
+                                "42P1": "40FL", "4363": "40FL",
+                                "9400": "45HC",
+                                "2232": "20RE",
+                                "4563": "40HF",
+                                "4532": "40HR"
+                            }
+                            new_type = type_mapping.get(container_type, "")
+                            ws.cell(row=cntr_count, column=9, value=new_type)
+
+                        # E/F 상태 처리 (11열)
+                        if len(edi_lines) > 6:
+                            last_value = edi_lines[6].rstrip("'")  # 마지막 따옴표 제거
+                            if last_value == "4":
+                                ws.cell(row=cntr_count, column=11, value="E")
+                            elif last_value == "5":
+                                ws.cell(row=cntr_count, column=11, value="F")
+                        
+                        print(f"EQD processed - Container: {edi_lines[2]}, Type: {new_type}, Status: {ws.cell(row=cntr_count, column=11).value}")  # 디버깅용
+                    except Exception as e:
+                        print(f"Error processing EQD: {str(e)}")  # 디버깅용
+
+                # CN (컨테이너 상태) 처리
+                elif edi_lines[0] == "CN" and len(edi_lines) > 6:
+                    if edi_lines[6] == "4'":
+                        ws.cell(row=cntr_count, column=11, value="E")
+                    elif edi_lines[6] == "5'":
+                        ws.cell(row=cntr_count, column=11, value="F")
+
+                # NAD (운송인 정보) 처리
+                elif edi_lines[0] == "NAD" and len(edi_lines) > 2:
+                    ws.cell(row=cntr_count, column=4, value=edi_lines[2][:3])
+
+                # TMP (온도 정보) 처리
+                elif edi_lines[0] == "TMP" and len(edi_lines) > 2:
+                    try:
+                        # TMP+2+05.0:CEL' 또는 TMP+2+00.0:CEL' 형식에서 온도값 추출
+                        temp_str = edi_lines[2].split(':')[0].strip()  # :CEL' 부분 제거
+                        
+                        # 부호가 있는 경우와 없는 경우 처리
+                        if temp_str.startswith('+'):
+                            temp_str = temp_str[1:]  # 플러스 부호 제거
+                        
+                        # 앞의 0 제거하고 소수점 처리
+                        if temp_str.startswith('0') and not temp_str.startswith('0.'):
+                            temp_str = temp_str[1:]  # 앞의 0 제거
+                            
+                        ws.cell(row=cntr_count, column=13, value=f"{temp_str}C")
+                        print(f"Temperature processed: {temp_str}C")  # 디버깅용
+                    except Exception as e:
+                        print(f"Error processing temperature: {str(e)}")  # 디버깅용
+                        ws.cell(row=cntr_count, column=13, value="")  # 에러 시 빈 값 설정
+
+                # DGS (위험물 정보) 처리
+                elif edi_lines[0] == "DGS" and len(edi_lines) > 3:
+                    ws.cell(row=cntr_count, column=14, value=edi_lines[2])
+                    ws.cell(row=cntr_count, column=15, value=edi_lines[3])
+
+                # DIM (치수 정보) 처리
+                elif edi_lines[0] == "DIM" and len(edi_lines) > 2:
+                    ws.cell(row=cntr_count, column=21, value=edi_lines[2])
+
+            # 파일 저장
+            output_filename = f"{vessel} {voy} {port}.xlsx"
+            output_file = os.path.join(input_dir, output_filename)
+            
+            # 기존 파일이 있다면 삭제
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except PermissionError:
+                    messagebox.showerror("오류", "기존 파일이 열려있습니다. 파일을 닫고 다시 시도해주세요.")
+                    return
+
+            try:
+                wb.save(output_file)
+                print(f"File saved successfully at: {output_file}")  # 디버깅용
+                
+                # 파일이 정상적으로 생성되었는지 확인
+                if os.path.exists(output_file):
+                    file_size = os.path.getsize(output_file)
+                    print(f"Created file size: {file_size} bytes")  # 디버깅용
+                    if file_size > 0:
+                        messagebox.showinfo("성공", f"EDI 파일이 성공적으로 변환되었습니다.\n저장 위치: {output_file}")
+                    else:
+                        messagebox.showerror("오류", "파일이 올바르게 생성되지 않았습니다.")
+                else:
+                    messagebox.showerror("오류", "파일 생성에 실패했습니다.")
+            except Exception as e:
+                print(f"Error saving file: {str(e)}")  # 디버깅용
+                messagebox.showerror("오류", f"파일 저장 중 오류가 발생했습니다: {str(e)}")
+            finally:
+                wb.close()
+
+        except Exception as e:
+            print(f"Error in process_edi_file: {str(e)}")  # 디버깅용
+            messagebox.showerror("오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}")
 
 if __name__ == "__main__":
     app = ContainerConverter()
