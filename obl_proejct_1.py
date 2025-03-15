@@ -2268,6 +2268,46 @@ class ContainerConverter:
                 elif edi_lines[0] == "DIM" and len(edi_lines) > 2:
                     ws.cell(row=cntr_count, column=21, value=edi_lines[2])
 
+            # POD 요약 생성
+            pod_summary = {}
+            for row in range(7, ws.max_row + 1):  # 데이터가 시작되는 7행부터
+                pod = ws.cell(row=row, column=1).value  # POD는 1열(A열)에 있음
+                if pod and pod != "UNSET":  # POD 값이 있고 UNSET이 아닌 경우만
+                    pod_summary[pod] = pod_summary.get(pod, 0) + 1
+
+            # POD 요약 텍스트 업데이트
+            self.pod_summary_text.delete(1.0, tk.END)
+            
+            # 색상 태그 설정 (배경색과 보색)
+            self.pod_summary_text.tag_configure("krpus", 
+                background="#90EE90",  # 연한 녹색 배경
+                foreground="#FF1493")  # 진한 분홍색 글자
+            
+            self.pod_summary_text.tag_configure("krkan", 
+                background="#FFD700",  # 골드 배경
+                foreground="#000080")  # 네이비 글자
+            
+            self.pod_summary_text.tag_configure("krinc", 
+                background="#87CEEB",  # 하늘색 배경
+                foreground="#FF4500")  # 주황색 글자
+            
+            self.pod_summary_text.insert(tk.END, "=== POD Summary ===\n\n")
+            
+            total_containers = 0
+            for pod, count in sorted(pod_summary.items()):  # POD 알파벳 순으로 정렬
+                # POD별로 다른 배경색과 글자색 적용
+                if pod == "KRPUS":
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n", "krpus")
+                elif pod == "KRKAN":
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n", "krkan")
+                elif pod == "KRINC":
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n", "krinc")
+                else:
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n")
+                total_containers += count
+            
+            self.pod_summary_text.insert(tk.END, f"\nTotal: {total_containers}")
+
             # 파일 저장
             output_filename = f"{vessel} {voy} {port}.xlsx"
             output_file = os.path.join(input_dir, output_filename)
