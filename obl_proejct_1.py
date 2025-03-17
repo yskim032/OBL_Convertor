@@ -2210,16 +2210,89 @@ class ContainerConverter:
                         if len(edi_lines) > 3:
                             container_type = edi_lines[3]
                             type_mapping = {
-                                "2200": "20DV", "2210": "20DV", "22G0": "20DV", "22G1": "20DV",
-                                "22T0": "20TK",
-                                "42G0": "40DV", "4310": "40DV",
-                                "45G0": "40HC", "4510": "40HC", "45G1": "40HC",
-                                "45R0": "40HR",
-                                "42P1": "40FL", "4363": "40FL",
-                                "9400": "45HC",
-                                "2232": "20RE",
-                                "4563": "40HF",
-                                "4532": "40HR"
+                                # 20FT Containers
+                                "2200": "20DV", "2210": "20DV", "22G0": "20DV", "22G1": "20DV",  # Standard 20ft
+                                "22T0": "20TK", "22T1": "20TK",  # Tank 20ft
+                                "2232": "20RE", "22R0": "20RE", "22R1": "20RE",  # Reefer 20ft
+                                "22P1": "20FL", "22P0": "20FL",  # Flat Rack 20ft
+                                "22U1": "20OT", "22U0": "20OT",  # Open Top 20ft
+                                "22H0": "20HQ", "22H1": "20HQ",  # High Cube 20ft
+                                "22B0": "20BK", "22B1": "20BK",  # Bulk 20ft
+                                "2250": "20RF",  # Reefer 20ft
+                                "22GP": "20GP", # General Purpose 20ft
+                                "22PC": "20FR", # Platform Container 20ft
+                                "22UT": "20OT", # Open Top 20ft
+
+                                # 40FT Containers
+                                "42G0": "40DV", "4310": "40DV", "42G1": "40DV",  # Standard 40ft
+                                "45G0": "40HC", "4510": "40HC", "45G1": "40HC",  # High Cube 40ft
+                                "45R0": "40HR", "4532": "40HR", "45R1": "40HR",  # High Cube Reefer 40ft
+                                "42P1": "40FL", "4363": "40FL", "42P0": "40FL",  # Flat Rack 40ft
+                                "42U1": "40OT", "42U0": "40OT",  # Open Top 40ft
+                                "4232": "40RE", "42R0": "40RE",  # Reefer 40ft
+                                "42T0": "40TK", "42T1": "40TK",  # Tank 40ft
+                                "4563": "40HF",  # High Cube Flat Rack 40ft
+                                "42B0": "40BK",  # Bulk 40ft
+                                "40GP": "40GP", # General Purpose 40ft
+                                "40PC": "40FR", # Platform Container 40ft
+                                "40UT": "40OT", # Open Top 40ft
+                                "43GP": "40HC", # 40ft High Cube
+
+                                # 45FT Containers
+                                "9400": "45HC", "L5G0": "45HC",  # High Cube 45ft
+                                "L5G1": "45HC", "95G0": "45HC",  # High Cube 45ft variants
+                                "45GP": "45HC", # 45ft High Cube General Purpose
+                                "45PC": "45FR", # Platform Container 45ft
+                                "45UT": "45OT", # Open Top 45ft
+
+                                # Special Equipment
+                                "GENE": "GE",  # Generator
+                                "VENT": "VT",  # Ventilated
+                                "CONT": "CT",  # Controlled Temperature
+                                "CRYO": "CY",  # Cryogenic
+                                "HCFR": "HRF", # High Cube Flat Rack
+                                "PCHP": "HP", # Platform
+                                "REOT": "RO", # Reefer Open Top
+                                "TKOT": "TO", # Tank Open Top
+                                "PCOT": "PO", # Platform Open Top
+                                "FLOT": "FO", # Flat Rack Open Top
+                                "SKEL": "SK", # Skeletal
+                                "FRMG": "FG", # Frame
+                                "BULD": "BD", # Bulked
+                                "LIVS": "LS", # Live Stock
+                                "VEHI": "VH", # Vehicle Carrier
+                                "PIPE": "PP", # Pipe Carrier
+                                "LOGS": "LG", # Log Carrier
+                                "DANG": "DG", # Dangerous Goods
+                                "EXPL": "EX", # Explosives
+                                "RADIO": "RD", # Radioactive
+                                "OXID": "OX", # Oxidizing Substances
+                                "CORR": "CR", # Corrosives
+                                "MISC": "MC", # Miscellaneous Dangerous Goods
+                                "20HC": "20HC", # 20ft High Cube
+                                "40PW": "40PW", # 40ft Pallet Wide
+                                "45PW": "45PW", # 45ft Pallet Wide
+                                "20RF": "20RF", # 20ft Reefer
+                                "40RF": "40RF", # 40ft Reefer
+                                "45RF": "45RF", # 45ft Reefer
+                                "20TN": "20TN", # 20ft Tank
+                                "40TN": "40TN", # 40ft Tank
+                                "20PL": "20PL", # 20ft Platform
+                                "40PL": "40PL", # 40ft Platform
+                                "45PL": "45PL", # 45ft Platform
+                                "20OS": "20OS", # 20ft Open Side
+                                "40OS": "40OS", # 40ft Open Side
+                                "20VN": "20VN", # 20ft Ventilated
+                                "40VN": "40VN", # 40ft Ventilatedㅇ뎀ㄱ셕ㄷ
+                                "20SS": "20SS", # 20ft Side Stanchion
+                                "40SS": "40SS", # 40ft Side Stanchion
+                                "20HT": "20HT", # 20ft Hard Top
+                                "40HT": "40HT", # 40ft Hard Top
+                                "20OT": "20OT", # 20ft Open Top
+                                "40OT": "40OT", # 40ft Open Top
+                                "40HF": "40HF", # 40ft Open Top
+                                "40HO": "40HO", # 40ft Open Top
+                                "45OT": "45OT", # 45ft Open Top
                             }
                             new_type = type_mapping.get(container_type, "")
                             ws.cell(row=cntr_count, column=9, value=new_type)
