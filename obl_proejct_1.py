@@ -1997,11 +1997,17 @@ class ContainerConverter:
         # 각 행에 대해 매핑 적용
         for idx, row in updated_df.iterrows():
             pod = str(row['POD']).strip().upper()
-            for mapping in mappings:
-                if pod == mapping['port'].upper() or pod == mapping['stow_code'].upper():
-                    updated_df.at[idx, 'POD'] = mapping['port']
-                    updated_df.at[idx, 'Stow'] = mapping['stow_code']
-                    break
+            fpod = str(row.get('FPOD', '')).strip().upper()
+            stow = str(row.get('Stow', '')).strip().upper()
+            
+            # POD와 FPOD가 같으면 건너뛰기
+            if pod != fpod:
+
+                for mapping in mappings:
+                    # if pod == mapping['port'].upper() or pod == mapping['stow_code'].upper():
+                        updated_df.at[idx, 'POD'] = mapping['port']
+                        updated_df.at[idx, 'Stow'] = mapping['stow_code']
+                        break
         
         return updated_df
 
