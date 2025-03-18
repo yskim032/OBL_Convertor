@@ -1890,6 +1890,19 @@ class ContainerConverter:
         dialog.title("서비스 선택")
         dialog.geometry("600x400")
         
+        # Stow Code 변환 미적용 버튼
+        no_conversion_btn = tk.Button(
+            dialog,
+            text="Stow Code 변환 미적용",
+            command=lambda: dialog.destroy(),
+            relief="raised", 
+            bg="#ff9999",  # 붉은 계열 배경색
+            padx=10,
+            pady=5,
+            cursor="hand2"
+        )
+        no_conversion_btn.pack(pady=10)
+        
         # 설명 레이블
         ttk.Label(dialog, text="발견된 POD와 일치하는 서비스 목록입니다.\n서비스를 클릭하여 선택해주세요.").pack(pady=10)
         
@@ -2334,13 +2347,20 @@ class ContainerConverter:
                         # TMP+2+05.0:CEL' 또는 TMP+2+00.0:CEL' 형식에서 온도값 추출
                         temp_str = edi_lines[2].split(':')[0].strip()  # :CEL' 부분 제거
                         
-                        # 부호가 있는 경우와 없는 경우 처리
-                        if temp_str.startswith('+'):
+                        # 부호 처리
+                        is_negative = temp_str.startswith('-')
+                        if is_negative:
+                            temp_str = temp_str[1:]  # 마이너스 부호 제거
+                        elif temp_str.startswith('+'):
                             temp_str = temp_str[1:]  # 플러스 부호 제거
-                        
+                            
                         # 앞의 0 제거하고 소수점 처리
                         if temp_str.startswith('0') and not temp_str.startswith('0.'):
                             temp_str = temp_str[1:]  # 앞의 0 제거
+                            
+                        # 부호 다시 추가
+                        if is_negative:
+                            temp_str = f"-{temp_str}"
                             
                         ws.cell(row=cntr_count, column=13, value=f"{temp_str}C")
                         print(f"Temperature processed: {temp_str}C")  # 디버깅용
