@@ -2295,6 +2295,14 @@ class ContainerConverter:
                                 "45OT": "45OT", # 45ft Open Top
                             }
                             new_type = type_mapping.get(container_type, "")
+                            
+                            # If container_type not in mapping, check if it starts with 2 or 4
+                            if not new_type and container_type:
+                                if container_type.startswith('2'):
+                                    new_type = "20DV"
+                                elif container_type.startswith('4'):
+                                    new_type = "40HC"
+                                    
                             ws.cell(row=cntr_count, column=9, value=new_type)
 
                         # E/F 상태 처리 (11열)
@@ -2342,8 +2350,8 @@ class ContainerConverter:
 
                 # DGS (위험물 정보) 처리
                 elif edi_lines[0] == "DGS" and len(edi_lines) > 3:
-                    ws.cell(row=cntr_count, column=14, value=edi_lines[2])
-                    ws.cell(row=cntr_count, column=15, value=edi_lines[3])
+                    ws.cell(row=cntr_count, column=14, value=float(edi_lines[2]))
+                    ws.cell(row=cntr_count, column=15, value=float(edi_lines[3]))
 
                 # DIM (치수 정보) 처리
                 elif edi_lines[0] == "DIM" and len(edi_lines) > 2:
@@ -2351,10 +2359,16 @@ class ContainerConverter:
 
             # POD 요약 생성
             pod_summary = {}
+            pol_pod_summary = {}  # POL과 port가 일치하는 데이터의 요약
             for row in range(7, ws.max_row + 1):  # 데이터가 시작되는 7행부터
                 pod = ws.cell(row=row, column=1).value  # POD는 1열(A열)에 있음
+                pol = ws.cell(row=row, column=5).value  # POL은 5열(E열)에 있음
+                
                 if pod and pod != "UNSET":  # POD 값이 있고 UNSET이 아닌 경우만
                     pod_summary[pod] = pod_summary.get(pod, 0) + 1
+                    # POL이 현재 port와 일치하는 경우만 별도 집계
+                    if pol == port:
+                        pol_pod_summary[pod] = pol_pod_summary.get(pod, 0) + 1
 
             # POD 요약 텍스트 업데이트
             self.pod_summary_text.delete(1.0, tk.END)
@@ -2372,7 +2386,13 @@ class ContainerConverter:
                 background="#87CEEB",  # 하늘색 배경
                 foreground="#FF4500")  # 주황색 글자
             
-            self.pod_summary_text.insert(tk.END, "=== POD Summary ===\n\n")
+            # 선박 및 항차 정보 추가
+            self.pod_summary_text.insert(tk.END, f"Vessel:  {vessel}\n")
+            self.pod_summary_text.insert(tk.END, f"Voyage:  {voy}\n") 
+            self.pod_summary_text.insert(tk.END, f"Port:    {port}\n\n")
+            
+            # 전체 POD Summary 출력
+            self.pod_summary_text.insert(tk.END, "=== Total POD Summary ===\n\n")
             
             total_containers = 0
             for pod, count in sorted(pod_summary.items()):  # POD 알파벳 순으로 정렬
@@ -2387,7 +2407,25 @@ class ContainerConverter:
                     self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n")
                 total_containers += count
             
-            self.pod_summary_text.insert(tk.END, f"\nTotal: {total_containers}")
+            self.pod_summary_text.insert(tk.END, f"\nTotal: {total_containers}\n\n")
+
+            # POL 기준 POD Summary 출력
+            self.pod_summary_text.insert(tk.END, f"=== POD Summary (From {port}) ===\n\n")
+            
+            pol_total_containers = 0
+            for pod, count in sorted(pol_pod_summary.items()):  # POD 알파벳 순으로 정렬
+                # POD별로 다른 배경색과 글자색 적용
+                if pod == "KRPUS":
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n", "krpus")
+                elif pod == "KRKAN":
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n", "krkan")
+                elif pod == "KRINC":
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n", "krinc")
+                else:
+                    self.pod_summary_text.insert(tk.END, f"{pod}: {count}\n")
+                pol_total_containers += count
+            
+            self.pod_summary_text.insert(tk.END, f"\nTotal from {port}: {pol_total_containers}")
 
             # 파일 저장
             output_filename = f"{vessel} {voy} {port}.xlsx"
